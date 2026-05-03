@@ -31,9 +31,17 @@
 - **J6–J7 (UI):** **Keywords** tab — table of project keywords (id, phrase, locale, device, archived) + **Refresh** + refresh after add. **SERP snapshots** tab — **keyword picker** (`QComboBox`), **Refresh lists**, history table (snapshot id, keyword, fetched time, status, organic row count), validation that the selected keyword belongs to the current project and is not archived. **Rank history** tab — Matplotlib chart rebuilt from **organic URL counts per SERP snapshot** (oldest→newest index), empty-state copy when no data; **Refresh chart** button; chart colors follow theme and **rebuild on theme save** and **after successful SERP job**.
 - **Docs:** [`docs/user-guide/journeys.md`](user-guide/journeys.md) — restored full **J1–J14** rows in the master table; removed duplicate/misplaced rows under the J1–J5 map; added **J6–J7 in the current app** mapping.
 
+## Iteration — J8 citations UI
+
+- **Citations page:** Tabbed UI — **built-in sources** table + refresh + CSV export of templates; **locations** for current project; **citation check** history (up to 500 rows) with joins. **`seed_builtin_sources`** also runs after **unlock** so older DB files get YAML-backed rows without wiping data.
+- **Local page:** Expanded placeholder copy — checklist direction and pointer to `docs/local-pack-roadmap.md`.
+- **Tests:** `export_builtin_citation_sources_csv` covered in `tests/unit/test_exporters.py`.
+- **Docs:** [`docs/user-guide/journeys.md`](user-guide/journeys.md) — **J8 in the current app**; [`docs/changelog.md`](changelog.md); [`docs/architecture.md`](architecture.md) / [`docs/ui/overview.md`](ui/overview.md) aligned with citations export.
+
 ## Next steps
 
 - Per-journey chapters under `docs/user-guide/` (see [`journeys.md`](user-guide/journeys.md) “Doc chapters”) as flows stabilize.
 - Screenshots in [`docs/ui/overview.md`](ui/overview.md) when the visual design is frozen.
 - Optional root `CHANGELOG.md` mirroring `docs/changelog.md` if you want GitHub Releases to pick it up automatically.
 - **J7 depth:** write real **`rankings`** rows from SERP/domain match rules (or manual rank capture) and plot position over time instead of the organic-count proxy.
+- **J8 depth:** citation matrix **job** type + worker to populate `citation_checks`; optional NAP diff vs page crawl.

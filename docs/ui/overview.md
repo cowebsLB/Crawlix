@@ -9,6 +9,7 @@
 - **Job dock (bottom):** tabs **Jobs** (table: id, type, %, status, project) | **Log** (timestamped lines).
 - **Inline progress:** **Crawl**, **Audit**, and **Keywords → SERP** show a **progress bar** and status text while the matching job runs; **Reports** export shows an indeterminate bar; **Check for updates** shows status text in the **status bar**.
 - **Keywords stack:** **Keywords** tab lists phrases in a table; **SERP snapshots** tab has a keyword picker, snapshot history table, and run button; **Rank history** plots SERP-derived activity (organic row counts) until real `rankings` data exists.
+- **Citations page:** tabbed **built-in sources** (YAML-seeded templates), **locations** for the project, **citation check** history; refresh + export built-in sources to CSV.
 - **Status bar:** politeness preset label (and transient messages during update check).
 
 ## Theming

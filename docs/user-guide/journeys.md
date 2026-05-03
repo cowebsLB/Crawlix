@@ -38,6 +38,12 @@ Each journey maps to **tests**, **docs**, and **release checklists**. Keep in sy
 | **J6** | **Keywords** tab: table of project keywords + refresh; **SERP snapshots** tab: keyword picker (`QComboBox`), run snapshot job, history table (fetched time, status, organic hit count). Storage unchanged: `serp_results` + gzip HTML via `fetch_serp_placeholder`. |
 | **J7** | **Rank history** tab: Matplotlib chart of **organic URL count per SERP snapshot** over time for the project (stand-in until `rankings` rows are written from a dedicated rank tracker). |
 
+## J8 in the current app
+
+| Journey | Where it lives |
+|---------|----------------|
+| **J8** | **Citations** page: **Built-in sources** tab lists global `citation_sources` rows (YAML → DB on first run and after each unlock via `seed_builtin_sources`); **Export built-in sources CSV**; **Locations (NAP)** tab lists `locations` for the current project; **Check history** tab lists `citation_checks` joined to location/source (newest first). Matrix fetch jobs and NAP-vs-page diff are not implemented yet. |
+
 ## Doc chapters (suggested)
 
 - `j1-first-launch.md` … `j14-uninstall.md` — one file per cluster as the product matures; see [README.md](README.md) in this folder for the user-guide index and status of those chapters.

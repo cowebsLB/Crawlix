@@ -1,4 +1,4 @@
-"""CSV/JSON export helpers for J4–J5 (pages, links, audits)."""
+"""CSV/JSON export helpers for J4–J5 (pages, links, audits) and J8 (citation sources)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from crawlix.db.models import Page, PageLink, SeoAudit
+from crawlix.db.models import CitationSource, Page, PageLink, SeoAudit
 
 
 def export_pages_csv(session: Session, project_id: int, path: Path) -> int:
@@ -126,3 +126,47 @@ def export_seo_audits_json(session: Session, project_id: int, path: Path) -> int
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
     return len(out)
+
+
+def export_builtin_citation_sources_csv(session: Session, path: Path) -> int:
+    """Export global built-in citation templates (YAML-backed rows in DB)."""
+    rows = (
+        session.execute(
+            select(CitationSource)
+            .where(CitationSource.is_builtin.is_(True), CitationSource.project_id.is_(None))
+            .order_by(CitationSource.sort_order, CitationSource.id)
+        )
+        .scalars()
+        .all()
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(
+            [
+                "id",
+                "name",
+                "template_url",
+                "region_tags_json",
+                "requires_playwright",
+                "enabled",
+                "pack_version",
+                "sort_order",
+            ]
+        )
+        for src in rows:
+            tags = src.region_tags
+            tags_cell = json.dumps(tags, ensure_ascii=False) if tags is not None else ""
+            w.writerow(
+                [
+                    src.id,
+                    src.name,
+                    src.template_url,
+                    tags_cell,
+                    int(src.requires_playwright),
+                    int(src.enabled),
+                    src.pack_version,
+                    src.sort_order,
+                ]
+            )
+    return len(rows)

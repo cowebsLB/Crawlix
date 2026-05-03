@@ -2,9 +2,14 @@ from pathlib import Path
 
 from sqlalchemy.orm import sessionmaker
 
-from crawlix.db.models import Page, Project, SeoAudit
+from crawlix.db.models import CitationSource, Page, Project, SeoAudit
 from crawlix.db.session import init_db, make_engine
-from crawlix.services.exporters import export_pages_csv, export_seo_audits_csv, export_seo_audits_json
+from crawlix.services.exporters import (
+    export_builtin_citation_sources_csv,
+    export_pages_csv,
+    export_seo_audits_csv,
+    export_seo_audits_json,
+)
 
 
 def test_export_pages_csv_roundtrip(tmp_path: Path) -> None:
@@ -46,5 +51,36 @@ def test_export_audits_json(tmp_path: Path) -> None:
         export_seo_audits_json(s, p.id, jpath)
         assert "issues_json" in jpath.read_text(encoding="utf-8")
         export_seo_audits_csv(s, p.id, tmp_path / "aud.csv")
+    finally:
+        s.close()
+
+
+def test_export_builtin_citation_sources_csv(tmp_path: Path) -> None:
+    db = tmp_path / "cit.db"
+    engine = make_engine(db)
+    init_db(engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
+    s = Session()
+    try:
+        s.add(
+            CitationSource(
+                project_id=None,
+                is_builtin=True,
+                name="Test source",
+                template_url="https://example.com?q={business_query}",
+                region_tags=["US"],
+                requires_playwright=False,
+                enabled=True,
+                pack_version=1,
+                sort_order=0,
+            )
+        )
+        s.commit()
+        out = tmp_path / "sources.csv"
+        n = export_builtin_citation_sources_csv(s, out)
+        assert n == 1
+        text = out.read_text(encoding="utf-8")
+        assert "Test source" in text
+        assert "business_query" in text
     finally:
         s.close()

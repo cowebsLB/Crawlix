@@ -41,11 +41,22 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from crawlix.config import app_db_path, default_data_dir
 from crawlix.db.bootstrap import upgrade_database
-from crawlix.db.models import Job, Keyword, Location, Page, Project, SeoAudit, SerpResult
+from crawlix.db.models import (
+    CitationCheck,
+    CitationSource,
+    Job,
+    Keyword,
+    Location,
+    Page,
+    Project,
+    SeoAudit,
+    SerpResult,
+)
 from crawlix.db.session import make_engine
 from crawlix.db.settings_store import get_value, set_value
 from crawlix.services.citations.seed import seed_builtin_sources
 from crawlix.services.exporters import (
+    export_builtin_citation_sources_csv,
     export_page_links_csv,
     export_pages_csv,
     export_seo_audits_csv,
@@ -163,6 +174,7 @@ class MainWindow(QMainWindow):
                 app_inst = QApplication.instance()
                 if app_inst:
                     apply_application_theme(app_inst, mode=mode)
+                seed_builtin_sources(s)
             finally:
                 s.close()
         return True
@@ -297,6 +309,7 @@ class MainWindow(QMainWindow):
         self._refresh_keywords_table()
         self._refresh_serp_tab_lists()
         self._rebuild_rank_chart()
+        self._refresh_citations_page()
 
     def _reload_projects_combo(self) -> None:
         self._project_combo.clear()
@@ -314,6 +327,7 @@ class MainWindow(QMainWindow):
         self._refresh_keywords_table()
         self._refresh_serp_tab_lists()
         self._rebuild_rank_chart()
+        self._refresh_citations_page()
 
     def _page_header(self, title: str, subtitle: str | None = None) -> QWidget:
         """Plain-text page title (avoid HTML auto-rich-text that breaks contrast)."""
@@ -838,22 +852,235 @@ class MainWindow(QMainWindow):
         self._pool.start(SerpWorker(jid, self._engine, self._bus))
         self._refresh_job_table()
 
+    def _export_builtin_citations_csv(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, self.tr("Export built-in citation sources"), "", self.tr("CSV (*.csv)")
+        )
+        if not path:
+            return
+        p = Path(path)
+        s = self._session()
+        try:
+            n = export_builtin_citation_sources_csv(s, p)
+        finally:
+            s.close()
+        QMessageBox.information(
+            self,
+            self.tr("Export"),
+            self.tr("Wrote {0} row(s) to:\n{1}").format(n, str(p)),
+        )
+
+    def _refresh_citations_builtin_table(self) -> None:
+        if not getattr(self, "_cit_src_table", None):
+            return
+        s = self._session()
+        try:
+            rows = (
+                s.execute(
+                    select(CitationSource)
+                    .where(CitationSource.is_builtin.is_(True), CitationSource.project_id.is_(None))
+                    .order_by(CitationSource.sort_order, CitationSource.id)
+                )
+                .scalars()
+                .all()
+            )
+            self._cit_src_table.setRowCount(len(rows))
+            for r, src in enumerate(rows):
+                tags = src.region_tags
+                tags_s = json.dumps(tags, ensure_ascii=False) if isinstance(tags, list) else (tags or "")
+                self._cit_src_table.setItem(r, 0, QTableWidgetItem(str(src.id)))
+                self._cit_src_table.setItem(r, 1, QTableWidgetItem(src.name))
+                url = src.template_url
+                if len(url) > 96:
+                    url = url[:93] + "…"
+                self._cit_src_table.setItem(r, 2, QTableWidgetItem(url))
+                self._cit_src_table.setItem(r, 3, QTableWidgetItem(tags_s))
+                self._cit_src_table.setItem(
+                    r, 4, QTableWidgetItem(self.tr("yes") if src.requires_playwright else "")
+                )
+                self._cit_src_table.setItem(r, 5, QTableWidgetItem(self.tr("yes") if src.enabled else ""))
+                self._cit_src_table.setItem(r, 6, QTableWidgetItem(str(src.pack_version)))
+        finally:
+            s.close()
+
+    def _refresh_citations_locations_table(self) -> None:
+        if not getattr(self, "_cit_loc_table", None):
+            return
+        if not self._current_project_id:
+            self._cit_loc_table.setRowCount(0)
+            return
+        s = self._session()
+        try:
+            locs = (
+                s.execute(
+                    select(Location)
+                    .where(Location.project_id == self._current_project_id)
+                    .order_by(Location.label.asc())
+                    .limit(200)
+                )
+                .scalars()
+                .all()
+            )
+            self._cit_loc_table.setRowCount(len(locs))
+            for r, loc in enumerate(locs):
+                self._cit_loc_table.setItem(r, 0, QTableWidgetItem(str(loc.id)))
+                self._cit_loc_table.setItem(r, 1, QTableWidgetItem(loc.label))
+                self._cit_loc_table.setItem(r, 2, QTableWidgetItem(loc.business_name))
+                line1 = loc.address_line1 or ""
+                city = loc.city or ""
+                reg = loc.region or ""
+                self._cit_loc_table.setItem(r, 3, QTableWidgetItem(line1))
+                self._cit_loc_table.setItem(r, 4, QTableWidgetItem(city))
+                self._cit_loc_table.setItem(r, 5, QTableWidgetItem(reg))
+                self._cit_loc_table.setItem(r, 6, QTableWidgetItem(loc.primary_phone_e164 or ""))
+        finally:
+            s.close()
+
+    def _refresh_citations_checks_table(self) -> None:
+        if not getattr(self, "_cit_chk_table", None):
+            return
+        if not self._current_project_id:
+            self._cit_chk_table.setRowCount(0)
+            return
+        s = self._session()
+        try:
+            q = (
+                select(CitationCheck, Location.label, CitationSource.name)
+                .join(Location, CitationCheck.location_id == Location.id)
+                .join(CitationSource, CitationCheck.source_id == CitationSource.id)
+                .where(Location.project_id == self._current_project_id)
+                .order_by(CitationCheck.id.desc())
+                .limit(500)
+            )
+            rows = s.execute(q).all()
+            self._cit_chk_table.setRowCount(len(rows))
+            for r, (chk, loc_label, src_name) in enumerate(rows):
+                when = chk.fetched_at.isoformat() if chk.fetched_at else ""
+                fu = chk.final_url or chk.requested_url or ""
+                if len(fu) > 80:
+                    fu = fu[:77] + "…"
+                err = (chk.error_text or "")[:120]
+                self._cit_chk_table.setItem(r, 0, QTableWidgetItem(str(chk.id)))
+                self._cit_chk_table.setItem(r, 1, QTableWidgetItem(when))
+                self._cit_chk_table.setItem(r, 2, QTableWidgetItem(loc_label))
+                self._cit_chk_table.setItem(r, 3, QTableWidgetItem(src_name))
+                self._cit_chk_table.setItem(r, 4, QTableWidgetItem(chk.status or ""))
+                self._cit_chk_table.setItem(
+                    r, 5, QTableWidgetItem("" if chk.http_status is None else str(chk.http_status))
+                )
+                self._cit_chk_table.setItem(r, 6, QTableWidgetItem(fu))
+                self._cit_chk_table.setItem(r, 7, QTableWidgetItem(err))
+        finally:
+            s.close()
+
+    def _refresh_citations_page(self) -> None:
+        self._refresh_citations_builtin_table()
+        self._refresh_citations_locations_table()
+        self._refresh_citations_checks_table()
+
     def _page_citations(self) -> QWidget:
         w = QWidget()
         l = QVBoxLayout(w)
         l.addWidget(
             self._page_header(
                 self.tr("Citations"),
-                self.tr("NAP vs directories — built-in sources from YAML."),
+                self.tr(
+                    "Built-in directory templates (YAML → DB), project NAP locations, and any stored citation checks."
+                ),
             )
         )
         l.addWidget(
             QLabel(
                 self.tr(
-                    "Matrix job wiring is next; built-in rows seed from resources/citation_sources_default.yaml."
+                    "Matrix fetch jobs are not wired yet; this page lists data you already have and supports exporting built-in source definitions."
                 )
             )
         )
+        tabs = QTabWidget()
+        src_tab = QWidget()
+        sv = QVBoxLayout(src_tab)
+        srow = QHBoxLayout()
+        sref = QPushButton(self.tr("Refresh built-in list"))
+        sref.clicked.connect(self._refresh_citations_builtin_table)
+        srow.addWidget(sref)
+        sex = QPushButton(self.tr("Export built-in sources CSV…"))
+        sex.clicked.connect(self._export_builtin_citations_csv)
+        srow.addWidget(sex)
+        srow.addStretch()
+        sv.addLayout(srow)
+        self._cit_src_table = QTableWidget(0, 7)
+        self._cit_src_table.setHorizontalHeaderLabels(
+            [
+                self.tr("ID"),
+                self.tr("Name"),
+                self.tr("Template URL"),
+                self.tr("Regions"),
+                self.tr("Playwright"),
+                self.tr("Enabled"),
+                self.tr("Pack"),
+            ]
+        )
+        self._cit_src_table.setColumnWidth(2, 420)
+        sv.addWidget(self._cit_src_table, 1)
+        tabs.addTab(src_tab, self.tr("Built-in sources"))
+
+        loc_tab = QWidget()
+        lv = QVBoxLayout(loc_tab)
+        lv.addWidget(
+            QLabel(
+                self.tr(
+                    "Locations belong to the current project (optional NAP at project creation in J3; dedicated editor later)."
+                )
+            )
+        )
+        lref = QPushButton(self.tr("Refresh locations"))
+        lref.clicked.connect(self._refresh_citations_locations_table)
+        lv.addWidget(lref)
+        self._cit_loc_table = QTableWidget(0, 7)
+        self._cit_loc_table.setHorizontalHeaderLabels(
+            [
+                self.tr("ID"),
+                self.tr("Label"),
+                self.tr("Business name"),
+                self.tr("Address"),
+                self.tr("City"),
+                self.tr("Region"),
+                self.tr("Phone"),
+            ]
+        )
+        self._cit_loc_table.setColumnWidth(2, 220)
+        lv.addWidget(self._cit_loc_table, 1)
+        tabs.addTab(loc_tab, self.tr("Locations (NAP)"))
+
+        chk_tab = QWidget()
+        cv = QVBoxLayout(chk_tab)
+        cv.addWidget(
+            QLabel(self.tr("Latest citation check rows for this project’s locations (newest first, up to 500)."))
+        )
+        cref = QPushButton(self.tr("Refresh check history"))
+        cref.clicked.connect(self._refresh_citations_checks_table)
+        cv.addWidget(cref)
+        self._cit_chk_table = QTableWidget(0, 8)
+        self._cit_chk_table.setHorizontalHeaderLabels(
+            [
+                self.tr("Check ID"),
+                self.tr("Fetched"),
+                self.tr("Location"),
+                self.tr("Source"),
+                self.tr("Status"),
+                self.tr("HTTP"),
+                self.tr("Final URL"),
+                self.tr("Error"),
+            ]
+        )
+        self._cit_chk_table.setColumnWidth(6, 320)
+        cv.addWidget(self._cit_chk_table, 1)
+        tabs.addTab(chk_tab, self.tr("Check history"))
+
+        l.addWidget(tabs, 1)
+        all_ref = QPushButton(self.tr("Refresh all citations tabs"))
+        all_ref.clicked.connect(self._refresh_citations_page)
+        l.addWidget(all_ref)
         return w
 
     def _page_local(self) -> QWidget:
@@ -863,7 +1090,20 @@ class MainWindow(QMainWindow):
         l.addWidget(
             QLabel(
                 self.tr(
-                    "GBP-oriented checklist — placeholder. Honest scope: APIs and manual capture where needed."
+                    "GBP / local pack — placeholder UI. Honest scope: official APIs and user-supplied evidence; "
+                    "no implied unsupported scraping."
+                )
+            )
+        )
+        l.addWidget(
+            QLabel(
+                self.tr(
+                    "Planned checklist direction:\n"
+                    "• NAP consistency across on-site and major listings (manual or API-backed).\n"
+                    "• GBP profile completeness (hours, categories, services) — link to official tools.\n"
+                    "• Local pack / map visibility only where SERP captures or third-party data allow defensible reads.\n"
+                    "• Review and Q&A hygiene — policy-first guidance.\n\n"
+                    "See docs/local-pack-roadmap.md for product constraints."
                 )
             )
         )
