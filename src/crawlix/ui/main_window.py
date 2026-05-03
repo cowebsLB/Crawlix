@@ -1,0 +1,806 @@
+"""Main application shell: sidebar, stacked pages, job dock, project switcher."""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from matplotlib.figure import Figure
+from PyQt6.QtCore import QSettings, QThreadPool
+from PyQt6.QtGui import QAction, QFont, QKeySequence
+from PyQt6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QSpinBox,
+    QStackedWidget,
+    QStatusBar,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, sessionmaker
+
+from crawlix.config import app_db_path, default_data_dir
+from crawlix.db.bootstrap import upgrade_database
+from crawlix.db.models import Job, Keyword, Page, Project
+from crawlix.db.session import make_engine
+from crawlix.db.settings_store import get_value, set_value
+from crawlix.services.citations.seed import seed_builtin_sources
+from crawlix.services.integrations import list_integration_placeholders
+from crawlix.services.updater import github_releases
+from crawlix.ui import onboarding
+from crawlix.ui.theme import apply_application_theme, sync_theme_to_qsettings
+from crawlix.workers.audit_worker import AuditWorker
+from crawlix.workers.crawl_worker import CrawlWorker
+from crawlix.workers.job_bus import JobBus
+from crawlix.workers.serp_worker import SerpWorker
+from crawlix.workers.task_worker import SimpleTaskWorker
+
+
+class MainWindow(QMainWindow):
+    def __init__(self) -> None:
+        super().__init__()
+        self._ok = False
+        self.setWindowTitle(self.tr("Crawlix"))
+        self.resize(1200, 800)
+
+        self._qs = QSettings("COWEBS", "Crawlix")
+        self._data_dir = Path(
+            self._qs.value("data_dir", str(default_data_dir()), str)  # type: ignore[arg-type]
+        )
+        self._engine = None
+        self._Session = None
+        self._current_project_id: int | None = None
+        self._pool = QThreadPool()
+        self._pool.setMaxThreadCount(4)
+        self._bus = JobBus()
+        self._bus.progress.connect(self._on_job_progress)
+        self._bus.finished.connect(self._on_job_finished)
+        self._bus.failed.connect(self._on_job_failed)
+        self._bus.task_progress.connect(self._on_task_progress)
+        self._bus.task_finished.connect(self._on_task_finished)
+        self._bus.task_failed.connect(self._on_task_failed)
+
+        self._crawl_active_job_id: int | None = None
+        self._audit_active_job_id: int | None = None
+        self._serp_active_job_id: int | None = None
+
+        if not self._bootstrap_database():
+            return
+
+        self._build_ui()
+        self._reload_styles()
+        self._reload_projects_combo()
+        self._refresh_job_table()
+        self._ok = True
+
+    def _session(self) -> Session:
+        assert self._Session is not None
+        return self._Session()
+
+    def _bootstrap_database(self) -> bool:
+        db_path = app_db_path(self._data_dir)
+        if not db_path.exists():
+            res = onboarding.run_first_run_wizard(self)
+            if not res:
+                return False
+            self._data_dir = Path(res["data_dir"])
+            self._data_dir.mkdir(parents=True, exist_ok=True)
+            self._qs.setValue("data_dir", str(self._data_dir))
+            db_path = app_db_path(self._data_dir)
+            upgrade_database(db_path)
+            self._engine = make_engine(db_path)
+            self._Session = sessionmaker(bind=self._engine, expire_on_commit=False)
+            s = self._session()
+            try:
+                set_value(s, "master_password_hash", res["password_hash"])
+                set_value(s, "politeness_preset", res["politeness_preset"])
+                set_value(s, "automation_disclaimer", res["automation_disclaimer"])
+                set_value(s, "wizard_completed", res["wizard_completed"])
+                set_value(s, "data_dir", str(self._data_dir))
+                set_value(s, "ui_theme", "dark")
+                s.commit()
+                sync_theme_to_qsettings("dark")
+                app = QApplication.instance()
+                if app:
+                    apply_application_theme(app, mode="dark")
+                seed_builtin_sources(s)
+                if (s.scalar(select(func.count()).select_from(Project)) or 0) == 0:
+                    s.add(
+                        Project(
+                            name=self.tr("Demo project"),
+                            slug="demo",
+                            default_domain="example.com",
+                        )
+                    )
+                    s.commit()
+            finally:
+                s.close()
+        else:
+            dlg = onboarding.UnlockDialog(self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return False
+            upgrade_database(db_path)
+            self._engine = make_engine(db_path)
+            self._Session = sessionmaker(bind=self._engine, expire_on_commit=False)
+            s = self._session()
+            try:
+                h = get_value(s, "master_password_hash")
+                if not h or not onboarding.verify_password(h, dlg.password()):
+                    QMessageBox.critical(self, self.tr("Unlock failed"), self.tr("Invalid password."))
+                    return False
+                mode = get_value(s, "ui_theme", "dark") or "dark"
+                sync_theme_to_qsettings(mode)
+                app_inst = QApplication.instance()
+                if app_inst:
+                    apply_application_theme(app_inst, mode=mode)
+            finally:
+                s.close()
+        return True
+
+    def _build_ui(self) -> None:
+        self._setup_menu()
+        outer = QWidget()
+        outer_layout = QVBoxLayout(outer)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        main_row = QWidget()
+        m = QHBoxLayout(main_row)
+        m.setContentsMargins(8, 8, 8, 0)
+
+        self._nav = QListWidget()
+        for label in (
+            self.tr("Dashboard"),
+            self.tr("Crawl"),
+            self.tr("Audit"),
+            self.tr("Keywords && SERP"),
+            self.tr("Citations"),
+            self.tr("Local"),
+            self.tr("Integrations"),
+            self.tr("Reports"),
+            self.tr("Settings"),
+        ):
+            QListWidgetItem(label, self._nav)
+        self._nav.setFixedWidth(200)
+        self._nav.currentRowChanged.connect(self._on_nav)
+
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._page_dashboard())
+        self._stack.addWidget(self._page_crawl())
+        self._stack.addWidget(self._page_audit())
+        self._stack.addWidget(self._page_keywords())
+        self._stack.addWidget(self._page_citations())
+        self._stack.addWidget(self._page_local())
+        self._stack.addWidget(self._page_integrations())
+        self._stack.addWidget(self._page_reports())
+        self._stack.addWidget(self._page_settings())
+
+        top = QHBoxLayout()
+        top.addWidget(QLabel(self.tr("Project:")))
+        self._project_combo = QComboBox()
+        self._project_combo.currentIndexChanged.connect(self._on_project_changed)
+        top.addWidget(self._project_combo, 1)
+
+        right = QVBoxLayout()
+        right.addLayout(top)
+        right.addWidget(self._stack, 1)
+
+        m.addWidget(self._nav)
+        m.addLayout(right, 1)
+        outer_layout.addWidget(main_row, 1)
+
+        dock_wrap = QWidget()
+        dw = QVBoxLayout(dock_wrap)
+        dw.setContentsMargins(8, 0, 8, 8)
+        tabs = QTabWidget()
+        self._jobs_table = QTableWidget(0, 5)
+        self._jobs_table.setHorizontalHeaderLabels(
+            [self.tr("ID"), self.tr("Type"), self.tr("%"), self.tr("Status"), self.tr("Project")]
+        )
+        self._log = QTextEdit()
+        self._log.setReadOnly(True)
+        tabs.addTab(self._jobs_table, self.tr("Jobs"))
+        tabs.addTab(self._log, self.tr("Log"))
+        dw.addWidget(QLabel(self.tr("Job dock")))
+        dw.addWidget(tabs)
+        outer_layout.addWidget(dock_wrap)
+
+        self.setCentralWidget(outer)
+        self._nav.setCurrentRow(0)
+
+        sb = QStatusBar()
+        preset = "conservative"
+        s = self._session()
+        try:
+            preset = get_value(s, "politeness_preset", "conservative") or "conservative"
+        finally:
+            s.close()
+        self._status_preset = QLabel(self.tr("Politeness: %1").replace("%1", preset))
+        sb.addPermanentWidget(self._status_preset)
+        self.setStatusBar(sb)
+
+    def _setup_menu(self) -> None:
+        m_file = self.menuBar().addMenu(self.tr("&File"))
+        act_quit = QAction(self.tr("E&xit"), self)
+        act_quit.setShortcut(QKeySequence.StandardKey.Quit)
+        act_quit.triggered.connect(self.close)
+        m_file.addAction(act_quit)
+        m_help = self.menuBar().addMenu(self.tr("&Help"))
+        act_updates = QAction(self.tr("&Check for updates…"), self)
+        act_updates.triggered.connect(self._check_updates)
+        m_help.addAction(act_updates)
+
+    def _reload_styles(self) -> None:
+        s = self._session()
+        try:
+            mode = get_value(s, "ui_theme", "dark") or "dark"
+        finally:
+            s.close()
+        app = QApplication.instance()
+        if app:
+            apply_application_theme(app, mode=mode)
+            sync_theme_to_qsettings(mode)
+
+    def _on_nav(self, row: int) -> None:
+        self._stack.setCurrentIndex(max(0, row))
+
+    def _on_project_changed(self) -> None:
+        pid = self._project_combo.currentData()
+        self._current_project_id = int(pid) if pid is not None else None
+
+    def _reload_projects_combo(self) -> None:
+        self._project_combo.clear()
+        s = self._session()
+        try:
+            for p in s.execute(select(Project).order_by(Project.name)).scalars():
+                self._project_combo.addItem(p.name, p.id)
+        finally:
+            s.close()
+        if self._project_combo.count():
+            self._current_project_id = int(self._project_combo.itemData(0))
+
+    def _page_header(self, title: str, subtitle: str | None = None) -> QWidget:
+        """Plain-text page title (avoid HTML auto-rich-text that breaks contrast)."""
+        box = QWidget()
+        v = QVBoxLayout(box)
+        v.setContentsMargins(0, 0, 0, 10)
+        t = QLabel(title)
+        tf = QFont(t.font())
+        tf.setPointSize(15)
+        tf.setBold(True)
+        t.setFont(tf)
+        v.addWidget(t)
+        if subtitle:
+            s = QLabel(subtitle)
+            s.setWordWrap(True)
+            v.addWidget(s)
+        return box
+
+    def _page_dashboard(self) -> QWidget:
+        w = QWidget()
+        l = QVBoxLayout(w)
+        l.addWidget(self._page_header(self.tr("Dashboard")))
+        l.addWidget(
+            QLabel(
+                self.tr("Overview for this project — run Crawl, SERP, or Citations from the sidebar.")
+            )
+        )
+        l.addStretch()
+        return w
+
+    def _page_crawl(self) -> QWidget:
+        w = QWidget()
+        l = QVBoxLayout(w)
+        l.addWidget(
+            self._page_header(
+                self.tr("Crawl"),
+                self.tr("Map this site’s pages and links."),
+            )
+        )
+        self._crawl_seeds = QLineEdit("https://example.com/")
+        self._crawl_depth = QSpinBox()
+        self._crawl_depth.setRange(0, 5)
+        self._crawl_depth.setValue(1)
+        form = QFormLayout()
+        form.addRow(self.tr("Seed URLs (comma-separated):"), self._crawl_seeds)
+        form.addRow(self.tr("Max depth:"), self._crawl_depth)
+        l.addLayout(form)
+        self._crawl_btn = QPushButton(self.tr("Start crawl"))
+        self._crawl_btn.clicked.connect(self._start_crawl)
+        l.addWidget(self._crawl_btn)
+        self._crawl_progress = QProgressBar()
+        self._crawl_progress.setRange(0, 100)
+        self._crawl_progress.setTextVisible(True)
+        self._crawl_progress.setVisible(False)
+        self._crawl_status = QLabel("")
+        self._crawl_status.setWordWrap(True)
+        self._crawl_status.setVisible(False)
+        l.addWidget(self._crawl_progress)
+        l.addWidget(self._crawl_status)
+        l.addStretch()
+        return w
+
+    def _start_crawl(self) -> None:
+        if not self._current_project_id:
+            QMessageBox.warning(self, self.tr("Project"), self.tr("Select a project first."))
+            return
+        seeds = [s.strip() for s in self._crawl_seeds.text().split(",") if s.strip()]
+        if not seeds:
+            return
+        s = self._session()
+        try:
+            preset = get_value(s, "politeness_preset", "conservative") or "conservative"
+            job = Job(
+                project_id=self._current_project_id,
+                type="crawl",
+                status="queued",
+                progress_pct=0,
+                payload_json={
+                    "seed_urls": seeds,
+                    "max_depth": int(self._crawl_depth.value()),
+                    "respect_robots": True,
+                    "politeness_preset": preset,
+                },
+            )
+            s.add(job)
+            s.commit()
+            jid = job.id
+        finally:
+            s.close()
+        self._append_log(f"Queued crawl job {jid}")
+        self._crawl_active_job_id = jid
+        self._crawl_btn.setEnabled(False)
+        self._crawl_progress.setRange(0, 100)
+        self._crawl_progress.setValue(0)
+        self._crawl_progress.setVisible(True)
+        self._crawl_status.setText(self.tr("Queued…"))
+        self._crawl_status.setVisible(True)
+        w = CrawlWorker(jid, self._engine, self._bus, job_key=f"crawl-{jid}")
+        self._pool.start(w)
+        self._refresh_job_table()
+
+    def _page_audit(self) -> QWidget:
+        w = QWidget()
+        l = QVBoxLayout(w)
+        l.addWidget(
+            self._page_header(
+                self.tr("Audit"),
+                self.tr("On-page SEO scores and issues."),
+            )
+        )
+        self._audit_btn = QPushButton(self.tr("Run audit on crawled pages"))
+        self._audit_btn.clicked.connect(self._start_audit)
+        l.addWidget(self._audit_btn)
+        self._audit_progress = QProgressBar()
+        self._audit_progress.setRange(0, 100)
+        self._audit_progress.setTextVisible(True)
+        self._audit_progress.setVisible(False)
+        self._audit_status = QLabel("")
+        self._audit_status.setWordWrap(True)
+        self._audit_status.setVisible(False)
+        l.addWidget(self._audit_progress)
+        l.addWidget(self._audit_status)
+        l.addStretch()
+        return w
+
+    def _start_audit(self) -> None:
+        if not self._current_project_id:
+            return
+        s = self._session()
+        try:
+            pages = (
+                s.execute(
+                    select(Page.id).where(Page.project_id == self._current_project_id).limit(20)
+                )
+                .scalars()
+                .all()
+            )
+            if not pages:
+                QMessageBox.information(self, self.tr("Audit"), self.tr("No pages yet — run a crawl."))
+                return
+            job = Job(
+                project_id=self._current_project_id,
+                type="audit",
+                status="queued",
+                progress_pct=0,
+                payload_json={"page_ids": list(pages)},
+            )
+            s.add(job)
+            s.commit()
+            jid = job.id
+        finally:
+            s.close()
+        self._audit_active_job_id = jid
+        self._audit_btn.setEnabled(False)
+        self._audit_progress.setRange(0, 100)
+        self._audit_progress.setValue(0)
+        self._audit_progress.setVisible(True)
+        self._audit_status.setText(self.tr("Queued…"))
+        self._audit_status.setVisible(True)
+        self._pool.start(AuditWorker(jid, self._engine, self._bus))
+        self._refresh_job_table()
+
+    def _page_keywords(self) -> QWidget:
+        w = QWidget()
+        l = QVBoxLayout(w)
+        l.addWidget(
+            self._page_header(
+                self.tr("Keywords && SERP"),
+                self.tr("Keywords, SERP snapshots, rank history."),
+            )
+        )
+        tabs = QTabWidget()
+        kw_tab = QWidget()
+        kvl = QVBoxLayout(kw_tab)
+        self._kw_phrase = QLineEdit()
+        kf = QFormLayout()
+        kf.addRow(self.tr("New keyword:"), self._kw_phrase)
+        kb = QPushButton(self.tr("Add keyword"))
+        kb.clicked.connect(self._add_keyword)
+        kvl.addLayout(kf)
+        kvl.addWidget(kb)
+        tabs.addTab(kw_tab, self.tr("Keywords"))
+
+        serp_tab = QWidget()
+        svl = QVBoxLayout(serp_tab)
+        self._serp_btn = QPushButton(self.tr("Run SERP snapshot (demo parser)"))
+        self._serp_btn.clicked.connect(self._run_serp)
+        svl.addWidget(self._serp_btn)
+        self._serp_progress = QProgressBar()
+        self._serp_progress.setRange(0, 100)
+        self._serp_progress.setTextVisible(True)
+        self._serp_progress.setVisible(False)
+        self._serp_status = QLabel("")
+        self._serp_status.setWordWrap(True)
+        self._serp_status.setVisible(False)
+        svl.addWidget(self._serp_progress)
+        svl.addWidget(self._serp_status)
+        svl.addStretch()
+        tabs.addTab(serp_tab, self.tr("SERP snapshots"))
+
+        rank_tab = QWidget()
+        rvl = QVBoxLayout(rank_tab)
+        s_theme = self._session()
+        try:
+            chart_theme = get_value(s_theme, "ui_theme", "dark") or "dark"
+        finally:
+            s_theme.close()
+        fig = Figure(figsize=(5, 3))
+        if chart_theme == "light":
+            fig.patch.set_facecolor("#f3f3f3")
+            ax = fig.add_subplot(111)
+            ax.set_facecolor("#ffffff")
+            ax.tick_params(colors="#333333")
+            ax.title.set_color("#1a1a1a")
+            spine_c = "#888888"
+            line_c = "#006cbd"
+        else:
+            fig.patch.set_facecolor("#252526")
+            ax = fig.add_subplot(111)
+            ax.set_facecolor("#1e1e1e")
+            ax.tick_params(colors="#e8e8e8")
+            ax.title.set_color("#e8e8e8")
+            spine_c = "#6a6a6a"
+            line_c = "#4ec9b0"
+        for spine in ax.spines.values():
+            spine.set_color(spine_c)
+        ax.set_title(self.tr("Rank history (sample)"))
+        ax.plot([1, 2, 3], [10, 8, 7], color=line_c)
+        ax.grid(True, alpha=0.25, color=spine_c)
+        canvas = FigureCanvasQTAgg(fig)
+        rvl.addWidget(canvas)
+        tabs.addTab(rank_tab, self.tr("Rank history"))
+
+        l.addWidget(tabs)
+        return w
+
+    def _add_keyword(self) -> None:
+        if not self._current_project_id:
+            return
+        phrase = self._kw_phrase.text().strip()
+        if not phrase:
+            return
+        s = self._session()
+        try:
+            s.add(Keyword(project_id=self._current_project_id, phrase=phrase))
+            s.commit()
+        finally:
+            s.close()
+        self._kw_phrase.clear()
+
+    def _run_serp(self) -> None:
+        if not self._current_project_id:
+            return
+        s = self._session()
+        try:
+            kid = s.execute(
+                select(Keyword.id).where(Keyword.project_id == self._current_project_id).limit(1)
+            ).scalar_one_or_none()
+            if not kid:
+                QMessageBox.information(self, self.tr("SERP"), self.tr("Add a keyword first."))
+                return
+            job = Job(
+                project_id=self._current_project_id,
+                type="serp",
+                status="queued",
+                progress_pct=0,
+                payload_json={"keyword_id": int(kid)},
+            )
+            s.add(job)
+            s.commit()
+            jid = job.id
+        finally:
+            s.close()
+        self._append_log(f"Queued SERP job {jid}")
+        self._serp_active_job_id = jid
+        self._serp_btn.setEnabled(False)
+        self._serp_progress.setRange(0, 100)
+        self._serp_progress.setValue(0)
+        self._serp_progress.setVisible(True)
+        self._serp_status.setText(self.tr("Queued…"))
+        self._serp_status.setVisible(True)
+        self._pool.start(SerpWorker(jid, self._engine, self._bus))
+        self._refresh_job_table()
+
+    def _page_citations(self) -> QWidget:
+        w = QWidget()
+        l = QVBoxLayout(w)
+        l.addWidget(
+            self._page_header(
+                self.tr("Citations"),
+                self.tr("NAP vs directories — built-in sources from YAML."),
+            )
+        )
+        l.addWidget(
+            QLabel(
+                self.tr(
+                    "Matrix job wiring is next; built-in rows seed from resources/citation_sources_default.yaml."
+                )
+            )
+        )
+        return w
+
+    def _page_local(self) -> QWidget:
+        w = QWidget()
+        l = QVBoxLayout(w)
+        l.addWidget(self._page_header(self.tr("Local")))
+        l.addWidget(
+            QLabel(
+                self.tr(
+                    "GBP-oriented checklist — placeholder. Honest scope: APIs and manual capture where needed."
+                )
+            )
+        )
+        return w
+
+    def _page_integrations(self) -> QWidget:
+        w = QWidget()
+        l = QVBoxLayout(w)
+        l.addWidget(self._page_header(self.tr("Integrations")))
+        for st in list_integration_placeholders():
+            l.addWidget(QLabel(f"{st.provider.upper()} — {self.tr('Not connected')}"))
+        return w
+
+    def _page_reports(self) -> QWidget:
+        w = QWidget()
+        l = QVBoxLayout(w)
+        l.addWidget(self._page_header(self.tr("Reports")))
+        self._export_btn = QPushButton(self.tr("Export sample Markdown"))
+        self._export_btn.clicked.connect(self._export_md)
+        l.addWidget(self._export_btn)
+        self._reports_progress = QProgressBar()
+        self._reports_progress.setRange(0, 0)
+        self._reports_progress.setTextVisible(False)
+        self._reports_progress.setVisible(False)
+        self._reports_status = QLabel("")
+        self._reports_status.setVisible(False)
+        l.addWidget(self._reports_progress)
+        l.addWidget(self._reports_status)
+        return w
+
+    def _export_md(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, self.tr("Save report"), "", "*.md")
+        if not path:
+            return
+
+        def write_file() -> str:
+            Path(path).write_text("# Crawlix export\n\n(J11 stub)\n", encoding="utf-8")
+            return path
+
+        self._export_btn.setEnabled(False)
+        self._pool.start(
+            SimpleTaskWorker(
+                "export_md",
+                self._bus,
+                write_file,
+                started_message=self.tr("Writing file…"),
+            )
+        )
+
+    def _page_settings(self) -> QWidget:
+        w = QWidget()
+        l = QVBoxLayout(w)
+        l.addWidget(self._page_header(self.tr("Settings")))
+        self._theme_combo = QComboBox()
+        self._theme_combo.addItems([self.tr("Dark"), self.tr("Light")])
+        s = self._session()
+        try:
+            cur = get_value(s, "ui_theme", "dark") or "dark"
+        finally:
+            s.close()
+        self._theme_combo.blockSignals(True)
+        self._theme_combo.setCurrentIndex(1 if cur == "light" else 0)
+        self._theme_combo.blockSignals(False)
+        self._theme_combo.currentIndexChanged.connect(self._save_theme)
+        lf = QFormLayout()
+        lf.addRow(self.tr("Theme:"), self._theme_combo)
+        l.addLayout(lf)
+        l.addWidget(
+            QLabel(
+                self.tr(
+                    "Politeness defaults: same-host ~3–5s jitter, 1 conn/host, 4 concurrent hosts — README."
+                )
+            )
+        )
+        return w
+
+    def _save_theme(self) -> None:
+        mode = "light" if self._theme_combo.currentIndex() == 1 else "dark"
+        s = self._session()
+        try:
+            set_value(s, "ui_theme", mode)
+            s.commit()
+        finally:
+            s.close()
+        self._reload_styles()
+
+    def _check_updates(self) -> None:
+        self._pool.start(
+            SimpleTaskWorker(
+                "updates",
+                self._bus,
+                github_releases.fetch_latest_release,
+                started_message=self.tr("Contacting GitHub…"),
+            )
+        )
+
+    def _append_log(self, line: str) -> None:
+        self._log.append(f"{datetime.now(UTC).isoformat()} {line}")
+
+    def _on_job_progress(self, job_id: int, pct: float, msg: str) -> None:
+        self._append_log(f"Job {job_id}: {pct:.0f}% {msg}")
+        self._refresh_job_table()
+        if job_id == self._crawl_active_job_id:
+            self._crawl_progress.setVisible(True)
+            self._crawl_progress.setRange(0, 100)
+            self._crawl_progress.setValue(int(min(100, max(0, pct))))
+            self._crawl_status.setVisible(True)
+            self._crawl_status.setText(msg)
+        if job_id == self._audit_active_job_id:
+            self._audit_progress.setVisible(True)
+            self._audit_progress.setRange(0, 100)
+            self._audit_progress.setValue(int(min(100, max(0, pct))))
+            self._audit_status.setVisible(True)
+            self._audit_status.setText(msg)
+        if job_id == self._serp_active_job_id:
+            self._serp_progress.setVisible(True)
+            self._serp_progress.setRange(0, 100)
+            self._serp_progress.setValue(int(min(100, max(0, pct))))
+            self._serp_status.setVisible(True)
+            self._serp_status.setText(msg)
+
+    def _on_job_finished(self, job_id: int, summary: dict) -> None:
+        self._append_log(f"Job {job_id} finished: {json.dumps(summary)}")
+        self._refresh_job_table()
+        if job_id == self._crawl_active_job_id:
+            self._crawl_active_job_id = None
+            self._crawl_btn.setEnabled(True)
+            self._crawl_progress.setVisible(False)
+            self._crawl_status.setVisible(False)
+        if job_id == self._audit_active_job_id:
+            self._audit_active_job_id = None
+            self._audit_btn.setEnabled(True)
+            self._audit_progress.setVisible(False)
+            self._audit_status.setVisible(False)
+        if job_id == self._serp_active_job_id and summary.get("type") == "serp":
+            self._serp_active_job_id = None
+            self._serp_btn.setEnabled(True)
+            self._serp_progress.setVisible(False)
+            self._serp_status.setVisible(False)
+            QMessageBox.information(self, self.tr("SERP"), self.tr("Snapshot stored (best-effort)."))
+
+    def _on_job_failed(self, job_id: int, code: str, msg: str) -> None:
+        self._append_log(f"Job {job_id} failed ({code}): {msg}")
+        self._refresh_job_table()
+        if job_id == self._crawl_active_job_id:
+            self._crawl_active_job_id = None
+            self._crawl_btn.setEnabled(True)
+            self._crawl_progress.setVisible(False)
+            self._crawl_status.setVisible(False)
+            QMessageBox.warning(self, self.tr("Crawl"), f"{code}: {msg}")
+        if job_id == self._audit_active_job_id:
+            self._audit_active_job_id = None
+            self._audit_btn.setEnabled(True)
+            self._audit_progress.setVisible(False)
+            self._audit_status.setVisible(False)
+            QMessageBox.warning(self, self.tr("Audit"), f"{code}: {msg}")
+        if job_id == self._serp_active_job_id:
+            self._serp_active_job_id = None
+            self._serp_btn.setEnabled(True)
+            self._serp_progress.setVisible(False)
+            self._serp_status.setVisible(False)
+            QMessageBox.warning(self, self.tr("SERP"), f"{code}: {msg}")
+
+    def _on_task_progress(self, task_id: str, pct: float, msg: str) -> None:
+        if task_id == "updates":
+            self.statusBar().showMessage(msg, 0)
+        elif task_id == "export_md":
+            self._reports_progress.setVisible(True)
+            self._reports_status.setVisible(True)
+            self._reports_status.setText(msg)
+            if pct < 0:
+                self._reports_progress.setRange(0, 0)
+            else:
+                self._reports_progress.setRange(0, 100)
+                self._reports_progress.setValue(int(pct))
+
+    def _on_task_finished(self, task_id: str, data: dict) -> None:
+        if task_id == "updates":
+            self.statusBar().clearMessage()
+            rel = data.get("result") or {}
+            tag = rel.get("tag_name", "?")
+            QMessageBox.information(
+                self,
+                self.tr("Updates"),
+                self.tr("Latest release: %1 (verify checksum before install).").replace("%1", str(tag)),
+            )
+        elif task_id == "export_md":
+            self._export_btn.setEnabled(True)
+            self._reports_progress.setVisible(False)
+            self._reports_status.setVisible(False)
+            self._reports_progress.setRange(0, 100)
+            self._reports_progress.setValue(0)
+
+    def _on_task_failed(self, task_id: str, code: str, msg: str) -> None:
+        if task_id == "updates":
+            self.statusBar().clearMessage()
+            QMessageBox.warning(self, self.tr("Updates"), msg)
+        elif task_id == "export_md":
+            self._export_btn.setEnabled(True)
+            self._reports_progress.setVisible(False)
+            self._reports_status.setVisible(False)
+            self._reports_progress.setRange(0, 100)
+            self._reports_progress.setValue(0)
+            QMessageBox.warning(self, self.tr("Export"), msg)
+
+    def _refresh_job_table(self) -> None:
+        s = self._session()
+        try:
+            jobs = s.execute(select(Job).order_by(Job.id.desc()).limit(50)).scalars().all()
+            self._jobs_table.setRowCount(len(jobs))
+            for r, j in enumerate(jobs):
+                self._jobs_table.setItem(r, 0, QTableWidgetItem(str(j.id)))
+                self._jobs_table.setItem(r, 1, QTableWidgetItem(j.type))
+                self._jobs_table.setItem(r, 2, QTableWidgetItem(f"{j.progress_pct:.0f}"))
+                self._jobs_table.setItem(r, 3, QTableWidgetItem(j.status))
+                self._jobs_table.setItem(r, 4, QTableWidgetItem(str(j.project_id)))
+        finally:
+            s.close()

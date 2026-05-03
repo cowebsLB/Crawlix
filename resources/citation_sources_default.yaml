@@ -1,0 +1,25 @@
+# Built-in citation source templates (copied into DB as is_builtin=1 on first run).
+# requires_playwright: true when JS is required to see NAP
+- name: Yelp search (US-style)
+  template_url: "https://www.yelp.com/search?find_desc={business_query}&find_loc={city}%2C%20{region}"
+  region_tags: [US, CA]
+  requires_playwright: false
+  pack_version: 1
+
+- name: Yellow Pages (example search URL)
+  template_url: "https://www.yellowpages.com/search?search_terms={business_query}&geo_location_terms={city}%2C%20{region}"
+  region_tags: [US]
+  requires_playwright: false
+  pack_version: 1
+
+- name: OpenStreetMap Nominatim (geocode helper — rate-limit strictly; optional)
+  template_url: "https://nominatim.openstreetmap.org/search?format=json&q={business_query}%20{city}%20{region}"
+  region_tags: [GLOBAL]
+  requires_playwright: false
+  pack_version: 1
+
+- name: Generic Google search (fallback / manual review driver)
+  template_url: "https://www.google.com/search?q={business_query}+{phone_digits}+{city}"
+  region_tags: [GLOBAL]
+  requires_playwright: false
+  pack_version: 1

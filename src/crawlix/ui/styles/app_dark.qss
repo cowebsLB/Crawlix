@@ -1,0 +1,238 @@
+/* Dark theme — explicit contrast everywhere (wizard, dialogs, main). */
+QWidget {
+  font-size: 12pt;
+  color: #e8e8e8;
+  selection-background-color: #264f78;
+  selection-color: #ffffff;
+}
+
+QMainWindow,
+QDialog,
+QWizard,
+QWizardPage,
+QFrame {
+  background-color: #252526;
+  color: #e8e8e8;
+}
+
+/* All labels: never inherit invisible text */
+QLabel {
+  background-color: transparent;
+  color: #e8e8e8;
+}
+
+/* Titles in wizards use rich text / blue in HTML — force readable plain labels too */
+QWizard > QWidget > QLabel,
+QDialog QLabel {
+  color: #e8e8e8;
+}
+
+/* Line edits: dark fill + white text (fixes “invisible typing”) */
+QLineEdit,
+QTextEdit,
+QPlainTextEdit,
+QSpinBox,
+QDoubleSpinBox {
+  background-color: #1e1e1e;
+  color: #ffffff;
+  border: 1px solid #6a6a6a;
+  border-radius: 4px;
+  padding: 6px 8px;
+  selection-background-color: #264f78;
+  selection-color: #ffffff;
+}
+
+QLineEdit:disabled,
+QTextEdit:disabled,
+QSpinBox:disabled,
+QComboBox:disabled {
+  background-color: #3c3c3c;
+  color: #a0a0a0;
+  border: 1px solid #555555;
+}
+
+QComboBox {
+  background-color: #1e1e1e;
+  color: #ffffff;
+  border: 1px solid #6a6a6a;
+  border-radius: 4px;
+  padding: 4px 8px;
+  min-height: 1.2em;
+}
+
+QComboBox QAbstractItemView {
+  background-color: #2d2d30;
+  color: #e8e8e8;
+  selection-background-color: #264f78;
+  selection-color: #ffffff;
+  border: 1px solid #555555;
+}
+
+QComboBox::drop-down {
+  border: none;
+  width: 24px;
+}
+
+QListWidget {
+  background-color: #1e1e1e;
+  color: #e8e8e8;
+  border: 1px solid #3c3c3c;
+}
+
+QListWidget::item:selected {
+  background-color: #264f78;
+  color: #ffffff;
+}
+
+QListWidget::item:hover {
+  background-color: #2a2d2e;
+}
+
+QTableWidget {
+  background-color: #1e1e1e;
+  color: #e8e8e8;
+  gridline-color: #444444;
+  border: 1px solid #3c3c3c;
+}
+
+QHeaderView::section {
+  background-color: #2d2d30;
+  color: #e8e8e8;
+  padding: 6px;
+  border: 1px solid #444444;
+}
+
+QTabWidget::pane {
+  border: 1px solid #444444;
+  background-color: #252526;
+}
+
+QTabBar::tab {
+  background-color: #2d2d30;
+  color: #cccccc;
+  padding: 8px 16px;
+  border: 1px solid #444444;
+}
+
+QTabBar::tab:selected {
+  background-color: #0e639c;
+  color: #ffffff;
+}
+
+QPushButton {
+  background-color: #0e639c;
+  color: #ffffff;
+  padding: 8px 16px;
+  border-radius: 4px;
+  border: 1px solid #1177bb;
+}
+
+QPushButton:hover {
+  background-color: #1177bb;
+}
+
+QPushButton:pressed {
+  background-color: #0a4f75;
+}
+
+QPushButton:disabled {
+  background-color: #555555;
+  color: #aaaaaa;
+  border: 1px solid #555555;
+}
+
+QCheckBox,
+QRadioButton {
+  color: #e8e8e8;
+  spacing: 8px;
+}
+
+QCheckBox::indicator,
+QRadioButton::indicator {
+  width: 18px;
+  height: 18px;
+}
+
+QMenuBar {
+  background-color: #2d2d30;
+  color: #e8e8e8;
+}
+
+QMenuBar::item:selected {
+  background-color: #264f78;
+}
+
+QMenu {
+  background-color: #2d2d30;
+  color: #e8e8e8;
+  border: 1px solid #444444;
+}
+
+QMenu::item:selected {
+  background-color: #264f78;
+  color: #ffffff;
+}
+
+QProgressBar {
+  background-color: #3c3c3c;
+  color: #e8e8e8;
+  border: 1px solid #6a6a6a;
+  border-radius: 4px;
+  text-align: center;
+  min-height: 22px;
+}
+
+QProgressBar::chunk {
+  background-color: #007acc;
+  border-radius: 3px;
+}
+
+QStatusBar {
+  background-color: #007acc;
+  color: #ffffff;
+}
+
+QScrollBar:vertical {
+  background: #2d2d30;
+  width: 14px;
+}
+
+QScrollBar::handle:vertical {
+  background: #5a5a5a;
+  min-height: 24px;
+  border-radius: 4px;
+}
+
+QScrollBar:horizontal {
+  background: #2d2d30;
+  height: 14px;
+}
+
+QScrollBar::handle:horizontal {
+  background: #5a5a5a;
+  min-width: 24px;
+  border-radius: 4px;
+}
+
+QMessageBox {
+  background-color: #252526;
+}
+
+QMessageBox QLabel {
+  color: #e8e8e8;
+  min-width: 280px;
+}
+
+QMessageBox QPushButton {
+  min-width: 80px;
+}
+
+QSplitter::handle {
+  background-color: #444444;
+}
+
+/* Wizard footer buttons row */
+QWizard QPushButton,
+QDialogButtonBox QPushButton {
+  min-width: 88px;
+}
