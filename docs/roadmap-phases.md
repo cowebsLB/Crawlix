@@ -47,7 +47,7 @@ This file mirrors the **Delivery phasing (milestones)** section of the product p
 
 ## CI / manual gate (per release)
 
-- [ ] `pytest` + `pytest-qt` (where applicable) green on **Python 3.11 and 3.12**
+- [ ] `pytest` green on **Python 3.11 and 3.12** (add `pytest-qt` + headless Qt/EGL deps in CI only when GUI smoke tests land)
 - [ ] `alembic upgrade head` on fresh DB
 - [ ] Journeys listed for the phase: smoke manual pass
 - [ ] No `verify=False` in tree; grep for accidental secrets

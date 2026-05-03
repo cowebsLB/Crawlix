@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file. Format follows 
 
 ## [Unreleased]
 
+### Fixed
+
+- **CI (Ubuntu):** Removed unused **`pytest-qt`** from dev dependencies so `pytest` does not auto-load the Qt plugin (which required **`libEGL.so.1`** on headless runners). Current tests are non-GUI only.
+
 ### Added
 
 - Root **[INDEX.md](../INDEX.md)** as the documentation hub linking all docs.

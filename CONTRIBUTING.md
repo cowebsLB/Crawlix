@@ -10,6 +10,8 @@ ruff check src tests
 pytest tests/ -q
 ```
 
+GUI smoke tests are not in the default dev set: **`pytest-qt` is omitted** so CI on headless Linux does not import Qt/EGL. When you add widget tests, install `pytest-qt` locally and extend CI with OS packages such as **`libegl1`** / **`libxkbcommon-x11-0`** on Ubuntu as needed.
+
 ## Database migrations
 
 1. Edit SQLAlchemy models in `src/crawlix/db/models.py`.

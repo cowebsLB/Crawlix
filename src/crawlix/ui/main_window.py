@@ -8,10 +8,11 @@ from pathlib import Path
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
-from PyQt6.QtCore import QSettings, QThreadPool
-from PyQt6.QtGui import QAction, QFont, QKeySequence
+from PyQt6.QtCore import QSettings, QThreadPool, QUrl
+from PyQt6.QtGui import QAction, QDesktopServices, QFont, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -40,14 +41,22 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from crawlix.config import app_db_path, default_data_dir
 from crawlix.db.bootstrap import upgrade_database
-from crawlix.db.models import Job, Keyword, Page, Project
+from crawlix.db.models import Job, Keyword, Location, Page, Project, SeoAudit
 from crawlix.db.session import make_engine
 from crawlix.db.settings_store import get_value, set_value
 from crawlix.services.citations.seed import seed_builtin_sources
+from crawlix.services.exporters import (
+    export_page_links_csv,
+    export_pages_csv,
+    export_seo_audits_csv,
+    export_seo_audits_json,
+)
 from crawlix.services.integrations import list_integration_placeholders
 from crawlix.services.updater import github_releases
 from crawlix.ui import onboarding
+from crawlix.ui.project_dialog import NewProjectDialog
 from crawlix.ui.theme import apply_application_theme, sync_theme_to_qsettings
+from crawlix.utils.slug import unique_project_slug
 from crawlix.workers.audit_worker import AuditWorker
 from crawlix.workers.crawl_worker import CrawlWorker
 from crawlix.workers.job_bus import JobBus
@@ -116,6 +125,8 @@ class MainWindow(QMainWindow):
                 set_value(s, "automation_disclaimer", res["automation_disclaimer"])
                 set_value(s, "wizard_completed", res["wizard_completed"])
                 set_value(s, "data_dir", str(self._data_dir))
+                set_value(s, "ollama_base_url", res.get("ollama_base_url") or "http://127.0.0.1:11434")
+                set_value(s, "ollama_enabled", res.get("ollama_enabled", "0"))
                 set_value(s, "ui_theme", "dark")
                 s.commit()
                 sync_theme_to_qsettings("dark")
@@ -210,6 +221,15 @@ class MainWindow(QMainWindow):
         dock_wrap = QWidget()
         dw = QVBoxLayout(dock_wrap)
         dw.setContentsMargins(8, 0, 8, 8)
+        dock_head = QWidget()
+        dh = QHBoxLayout(dock_head)
+        dh.setContentsMargins(0, 0, 0, 0)
+        dh.addWidget(QLabel(self.tr("Job dock")))
+        dh.addStretch()
+        self._cancel_job_btn = QPushButton(self.tr("Cancel selected job"))
+        self._cancel_job_btn.clicked.connect(self._cancel_selected_job)
+        dh.addWidget(self._cancel_job_btn)
+        dw.addWidget(dock_head)
         tabs = QTabWidget()
         self._jobs_table = QTableWidget(0, 5)
         self._jobs_table.setHorizontalHeaderLabels(
@@ -219,7 +239,6 @@ class MainWindow(QMainWindow):
         self._log.setReadOnly(True)
         tabs.addTab(self._jobs_table, self.tr("Jobs"))
         tabs.addTab(self._log, self.tr("Log"))
-        dw.addWidget(QLabel(self.tr("Job dock")))
         dw.addWidget(tabs)
         outer_layout.addWidget(dock_wrap)
 
@@ -239,6 +258,13 @@ class MainWindow(QMainWindow):
 
     def _setup_menu(self) -> None:
         m_file = self.menuBar().addMenu(self.tr("&File"))
+        act_new = QAction(self.tr("New project…"), self)
+        act_new.triggered.connect(self._new_project)
+        m_file.addAction(act_new)
+        act_folder = QAction(self.tr("Open data folder…"), self)
+        act_folder.triggered.connect(self._open_data_folder)
+        m_file.addAction(act_folder)
+        m_file.addSeparator()
         act_quit = QAction(self.tr("E&xit"), self)
         act_quit.setShortcut(QKeySequence.StandardKey.Quit)
         act_quit.triggered.connect(self.close)
@@ -265,6 +291,9 @@ class MainWindow(QMainWindow):
     def _on_project_changed(self) -> None:
         pid = self._project_combo.currentData()
         self._current_project_id = int(pid) if pid is not None else None
+        self._refresh_dashboard_stats()
+        self._refresh_crawl_pages_table()
+        self._refresh_audit_results_table()
 
     def _reload_projects_combo(self) -> None:
         self._project_combo.clear()
@@ -276,6 +305,9 @@ class MainWindow(QMainWindow):
             s.close()
         if self._project_combo.count():
             self._current_project_id = int(self._project_combo.itemData(0))
+        self._refresh_dashboard_stats()
+        self._refresh_crawl_pages_table()
+        self._refresh_audit_results_table()
 
     def _page_header(self, title: str, subtitle: str | None = None) -> QWidget:
         """Plain-text page title (avoid HTML auto-rich-text that breaks contrast)."""
@@ -300,9 +332,15 @@ class MainWindow(QMainWindow):
         l.addWidget(self._page_header(self.tr("Dashboard")))
         l.addWidget(
             QLabel(
-                self.tr("Overview for this project — run Crawl, SERP, or Citations from the sidebar.")
+                self.tr("Overview for this project — run Crawl, Audit, or Keywords from the sidebar.")
             )
         )
+        self._dash_stats = QLabel("")
+        self._dash_stats.setWordWrap(True)
+        l.addWidget(self._dash_stats)
+        db = QPushButton(self.tr("Refresh summary"))
+        db.clicked.connect(self._refresh_dashboard_stats)
+        l.addWidget(db)
         l.addStretch()
         return w
 
@@ -335,7 +373,24 @@ class MainWindow(QMainWindow):
         self._crawl_status.setVisible(False)
         l.addWidget(self._crawl_progress)
         l.addWidget(self._crawl_status)
-        l.addStretch()
+        crawl_btns = QHBoxLayout()
+        rb = QPushButton(self.tr("Refresh pages list"))
+        rb.clicked.connect(self._refresh_crawl_pages_table)
+        crawl_btns.addWidget(rb)
+        ep = QPushButton(self.tr("Export pages CSV…"))
+        ep.clicked.connect(self._export_pages_csv_dialog)
+        crawl_btns.addWidget(ep)
+        el = QPushButton(self.tr("Export links CSV…"))
+        el.clicked.connect(self._export_links_csv_dialog)
+        crawl_btns.addWidget(el)
+        crawl_btns.addStretch()
+        l.addLayout(crawl_btns)
+        self._crawl_pages_table = QTableWidget(0, 5)
+        self._crawl_pages_table.setHorizontalHeaderLabels(
+            [self.tr("ID"), self.tr("URL"), self.tr("Title"), self.tr("HTTP"), self.tr("Last crawled")]
+        )
+        self._crawl_pages_table.setColumnWidth(1, 320)
+        l.addWidget(self._crawl_pages_table, 1)
         return w
 
     def _start_crawl(self) -> None:
@@ -398,7 +453,30 @@ class MainWindow(QMainWindow):
         self._audit_status.setVisible(False)
         l.addWidget(self._audit_progress)
         l.addWidget(self._audit_status)
-        l.addStretch()
+        aud_btns = QHBoxLayout()
+        ar = QPushButton(self.tr("Refresh audit results"))
+        ar.clicked.connect(self._refresh_audit_results_table)
+        aud_btns.addWidget(ar)
+        ea = QPushButton(self.tr("Export audits CSV…"))
+        ea.clicked.connect(self._export_audits_csv_dialog)
+        aud_btns.addWidget(ea)
+        ej = QPushButton(self.tr("Export audits JSON…"))
+        ej.clicked.connect(self._export_audits_json_dialog)
+        aud_btns.addWidget(ej)
+        aud_btns.addStretch()
+        l.addLayout(aud_btns)
+        self._audit_results_table = QTableWidget(0, 5)
+        self._audit_results_table.setHorizontalHeaderLabels(
+            [
+                self.tr("Audit ID"),
+                self.tr("Page ID"),
+                self.tr("URL"),
+                self.tr("Score"),
+                self.tr("Issues"),
+            ]
+        )
+        self._audit_results_table.setColumnWidth(2, 280)
+        l.addWidget(self._audit_results_table, 1)
         return w
 
     def _start_audit(self) -> None:
@@ -653,6 +731,23 @@ class MainWindow(QMainWindow):
         lf = QFormLayout()
         lf.addRow(self.tr("Theme:"), self._theme_combo)
         l.addLayout(lf)
+        self._ollama_url = QLineEdit()
+        self._ollama_en = QCheckBox(self.tr("Enable Ollama for AI features"))
+        s_ol = self._session()
+        try:
+            self._ollama_url.setText(
+                get_value(s_ol, "ollama_base_url", "http://127.0.0.1:11434") or "http://127.0.0.1:11434"
+            )
+            self._ollama_en.setChecked(get_value(s_ol, "ollama_enabled", "0") == "1")
+        finally:
+            s_ol.close()
+        olf = QFormLayout()
+        olf.addRow(self.tr("Ollama base URL:"), self._ollama_url)
+        olf.addRow("", self._ollama_en)
+        l.addLayout(olf)
+        ob = QPushButton(self.tr("Save Ollama settings"))
+        ob.clicked.connect(self._save_ollama_settings)
+        l.addWidget(ob)
         l.addWidget(
             QLabel(
                 self.tr(
@@ -671,6 +766,234 @@ class MainWindow(QMainWindow):
         finally:
             s.close()
         self._reload_styles()
+
+    def _save_ollama_settings(self) -> None:
+        s = self._session()
+        try:
+            set_value(s, "ollama_base_url", self._ollama_url.text().strip() or "http://127.0.0.1:11434")
+            set_value(s, "ollama_enabled", "1" if self._ollama_en.isChecked() else "0")
+            s.commit()
+        finally:
+            s.close()
+        QMessageBox.information(self, self.tr("Settings"), self.tr("Ollama settings saved."))
+
+    def _new_project(self) -> None:
+        dlg = NewProjectDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        s = self._session()
+        try:
+            slug = unique_project_slug(s, dlg.project_name())
+            p = Project(
+                name=dlg.project_name(),
+                slug=slug,
+                default_domain=dlg.default_domain(),
+            )
+            s.add(p)
+            s.flush()
+            loc = dlg.location_payload()
+            if loc:
+                s.add(
+                    Location(
+                        project_id=p.id,
+                        label=loc["label"],
+                        business_name=loc["business_name"],
+                        city=loc.get("city"),
+                        country_code=loc.get("country_code"),
+                    )
+                )
+            s.commit()
+            new_id = int(p.id)
+        finally:
+            s.close()
+        self._reload_projects_combo()
+        idx = self._project_combo.findData(new_id)
+        if idx >= 0:
+            self._project_combo.setCurrentIndex(idx)
+        self._append_log(self.tr("Created project %1").replace("%1", str(new_id)))
+
+    def _open_data_folder(self) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._data_dir.resolve())))
+
+    def _cancel_selected_job(self) -> None:
+        row = self._jobs_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, self.tr("Jobs"), self.tr("Select a job row in the Jobs table first."))
+            return
+        item = self._jobs_table.item(row, 0)
+        if not item:
+            return
+        try:
+            jid = int(item.text())
+        except ValueError:
+            return
+        s = self._session()
+        try:
+            j = s.get(Job, jid)
+            if not j:
+                return
+            if j.status not in ("queued", "running"):
+                QMessageBox.information(
+                    self,
+                    self.tr("Jobs"),
+                    self.tr("Only queued or running jobs can be cancelled."),
+                )
+                return
+            j.cancel_requested = True
+            s.commit()
+        finally:
+            s.close()
+        self._append_log(self.tr("Cancel requested for job %1").replace("%1", str(jid)))
+
+    def _refresh_dashboard_stats(self) -> None:
+        if not getattr(self, "_dash_stats", None):
+            return
+        if not self._current_project_id:
+            self._dash_stats.setText(self.tr("Select a project from the list above."))
+            return
+        s = self._session()
+        try:
+            n_pages = (
+                s.scalar(select(func.count()).select_from(Page).where(Page.project_id == self._current_project_id))
+                or 0
+            )
+            n_jobs = (
+                s.scalar(select(func.count()).select_from(Job).where(Job.project_id == self._current_project_id))
+                or 0
+            )
+            n_audits = s.scalar(
+                select(func.count())
+                .select_from(SeoAudit)
+                .join(Page, SeoAudit.page_id == Page.id)
+                .where(Page.project_id == self._current_project_id)
+            ) or 0
+            last_c = s.scalar(
+                select(func.max(Page.last_crawled_at)).where(Page.project_id == self._current_project_id)
+            )
+            last_s = last_c.isoformat() if last_c else self.tr("never")
+            self._dash_stats.setText(
+                self.tr("Pages: %1 — Jobs (all types): %2 — Audits: %3 — Last page crawl: %4")
+                .replace("%1", str(n_pages))
+                .replace("%2", str(n_jobs))
+                .replace("%3", str(n_audits))
+                .replace("%4", last_s)
+            )
+        finally:
+            s.close()
+
+    def _refresh_crawl_pages_table(self) -> None:
+        if not getattr(self, "_crawl_pages_table", None):
+            return
+        if not self._current_project_id:
+            self._crawl_pages_table.setRowCount(0)
+            return
+        s = self._session()
+        try:
+            pages = (
+                s.execute(
+                    select(Page)
+                    .where(Page.project_id == self._current_project_id)
+                    .order_by(Page.id.desc())
+                    .limit(500)
+                )
+                .scalars()
+                .all()
+            )
+            self._crawl_pages_table.setRowCount(len(pages))
+            for r, p in enumerate(pages):
+                self._crawl_pages_table.setItem(r, 0, QTableWidgetItem(str(p.id)))
+                self._crawl_pages_table.setItem(r, 1, QTableWidgetItem(p.url_norm))
+                self._crawl_pages_table.setItem(r, 2, QTableWidgetItem((p.title or "")[:120]))
+                self._crawl_pages_table.setItem(
+                    r, 3, QTableWidgetItem("" if p.status_code is None else str(p.status_code))
+                )
+                ts = p.last_crawled_at.isoformat() if p.last_crawled_at else ""
+                self._crawl_pages_table.setItem(r, 4, QTableWidgetItem(ts))
+        finally:
+            s.close()
+
+    def _refresh_audit_results_table(self) -> None:
+        if not getattr(self, "_audit_results_table", None):
+            return
+        if not self._current_project_id:
+            self._audit_results_table.setRowCount(0)
+            return
+        s = self._session()
+        try:
+            rows = (
+                s.execute(
+                    select(SeoAudit, Page.url_norm)
+                    .join(Page, SeoAudit.page_id == Page.id)
+                    .where(Page.project_id == self._current_project_id)
+                    .order_by(SeoAudit.audited_at.desc())
+                    .limit(200)
+                )
+                .all()
+            )
+            self._audit_results_table.setRowCount(len(rows))
+            for r, (audit, url_norm) in enumerate(rows):
+                issues = audit.issues_json or []
+                n_issues = len(issues) if isinstance(issues, list) else 0
+                self._audit_results_table.setItem(r, 0, QTableWidgetItem(str(audit.id)))
+                self._audit_results_table.setItem(r, 1, QTableWidgetItem(str(audit.page_id)))
+                self._audit_results_table.setItem(r, 2, QTableWidgetItem(url_norm))
+                sc = "" if audit.overall_score is None else f"{audit.overall_score:.1f}"
+                self._audit_results_table.setItem(r, 3, QTableWidgetItem(sc))
+                self._audit_results_table.setItem(r, 4, QTableWidgetItem(str(n_issues)))
+        finally:
+            s.close()
+
+    def _export_pages_csv_dialog(self) -> None:
+        if not self._current_project_id:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, self.tr("Export pages"), "", "*.csv")
+        if not path:
+            return
+        s = self._session()
+        try:
+            n = export_pages_csv(s, self._current_project_id, Path(path))
+        finally:
+            s.close()
+        QMessageBox.information(self, self.tr("Export"), self.tr("Exported %1 rows.").replace("%1", str(n)))
+
+    def _export_links_csv_dialog(self) -> None:
+        if not self._current_project_id:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, self.tr("Export links"), "", "*.csv")
+        if not path:
+            return
+        s = self._session()
+        try:
+            n = export_page_links_csv(s, self._current_project_id, Path(path))
+        finally:
+            s.close()
+        QMessageBox.information(self, self.tr("Export"), self.tr("Exported %1 rows.").replace("%1", str(n)))
+
+    def _export_audits_csv_dialog(self) -> None:
+        if not self._current_project_id:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, self.tr("Export audits"), "", "*.csv")
+        if not path:
+            return
+        s = self._session()
+        try:
+            n = export_seo_audits_csv(s, self._current_project_id, Path(path))
+        finally:
+            s.close()
+        QMessageBox.information(self, self.tr("Export"), self.tr("Exported %1 rows.").replace("%1", str(n)))
+
+    def _export_audits_json_dialog(self) -> None:
+        if not self._current_project_id:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, self.tr("Export audits"), "", "*.json")
+        if not path:
+            return
+        s = self._session()
+        try:
+            n = export_seo_audits_json(s, self._current_project_id, Path(path))
+        finally:
+            s.close()
+        QMessageBox.information(self, self.tr("Export"), self.tr("Exported %1 records.").replace("%1", str(n)))
 
     def _check_updates(self) -> None:
         self._pool.start(
@@ -715,11 +1038,19 @@ class MainWindow(QMainWindow):
             self._crawl_btn.setEnabled(True)
             self._crawl_progress.setVisible(False)
             self._crawl_status.setVisible(False)
+            self._refresh_crawl_pages_table()
+            self._refresh_dashboard_stats()
+            if summary.get("cancelled"):
+                QMessageBox.information(self, self.tr("Crawl"), self.tr("Crawl cancelled."))
         if job_id == self._audit_active_job_id:
             self._audit_active_job_id = None
             self._audit_btn.setEnabled(True)
             self._audit_progress.setVisible(False)
             self._audit_status.setVisible(False)
+            self._refresh_audit_results_table()
+            self._refresh_dashboard_stats()
+            if summary.get("cancelled"):
+                QMessageBox.information(self, self.tr("Audit"), self.tr("Audit cancelled."))
         if job_id == self._serp_active_job_id and summary.get("type") == "serp":
             self._serp_active_job_id = None
             self._serp_btn.setEnabled(True)
@@ -735,12 +1066,16 @@ class MainWindow(QMainWindow):
             self._crawl_btn.setEnabled(True)
             self._crawl_progress.setVisible(False)
             self._crawl_status.setVisible(False)
+            self._refresh_crawl_pages_table()
+            self._refresh_dashboard_stats()
             QMessageBox.warning(self, self.tr("Crawl"), f"{code}: {msg}")
         if job_id == self._audit_active_job_id:
             self._audit_active_job_id = None
             self._audit_btn.setEnabled(True)
             self._audit_progress.setVisible(False)
             self._audit_status.setVisible(False)
+            self._refresh_audit_results_table()
+            self._refresh_dashboard_stats()
             QMessageBox.warning(self, self.tr("Audit"), f"{code}: {msg}")
         if job_id == self._serp_active_job_id:
             self._serp_active_job_id = None

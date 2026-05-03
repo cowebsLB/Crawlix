@@ -50,6 +50,14 @@ class UnlockDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addWidget(QLabel(self.tr("Enter your master password:")))
         lay.addWidget(self._pw)
+        lay.addWidget(
+            QLabel(
+                self.tr(
+                    "If you forgot your password, it cannot be recovered from the app. "
+                    "Restore your data folder from a backup, or pick a new data directory to start fresh."
+                )
+            )
+        )
         lay.addWidget(buttons)
 
     def password(self) -> str:
@@ -165,18 +173,26 @@ class OllamaPage(QWizardPage):
     def __init__(self) -> None:
         super().__init__()
         self.setTitle(self.tr("Ollama (optional)"))
-        self.setSubTitle(self.tr("Local LLM at http://127.0.0.1:11434 — skip if not installed."))
-        lay = QVBoxLayout(self)
+        self.setSubTitle(self.tr("Local LLM — configure now or skip and set later in Settings."))
+        self._enable = QCheckBox(self.tr("Use Ollama for AI features"))
+        self._url = QLineEdit("http://127.0.0.1:11434")
+        lay = QFormLayout(self)
+        lay.addRow(self._enable)
+        lay.addRow(self.tr("Base URL:"), self._url)
         lay.addWidget(
             QLabel(
                 self.tr(
-                    "AI features work better with Ollama. You can enable it later in Settings."
+                    "Default is http://127.0.0.1:11434. Uncheck to leave AI disabled until you opt in."
                 )
             )
         )
 
-    def skipped(self) -> bool:
-        return True
+    def ollama_enabled(self) -> bool:
+        return self._enable.isChecked()
+
+    def ollama_base_url(self) -> str:
+        u = self._url.text().strip()
+        return u if u else "http://127.0.0.1:11434"
 
 
 def run_first_run_wizard(parent=None) -> dict | None:
@@ -195,10 +211,13 @@ def run_first_run_wizard(parent=None) -> dict | None:
     data_page: DataDirPage = wiz.page(1)  # type: ignore[assignment]
     pw_page: MasterPasswordPage = wiz.page(2)  # type: ignore[assignment]
     pol_page: PolitenessPage = wiz.page(4)  # type: ignore[assignment]
+    ollama_page: OllamaPage = wiz.page(5)  # type: ignore[assignment]
     return {
         "data_dir": data_page.data_dir(),
         "password_hash": hash_password(pw_page.password()),
         "politeness_preset": pol_page.preset(),
         "automation_disclaimer": "1",
         "wizard_completed": "1",
+        "ollama_base_url": ollama_page.ollama_base_url(),
+        "ollama_enabled": "1" if ollama_page.ollama_enabled() else "0",
     }

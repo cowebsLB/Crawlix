@@ -9,6 +9,18 @@ Each journey maps to **tests**, **docs**, and **release checklists**. Keep in sy
 | **J3** | New project | Create project (name, domain) → optional location | `projects`, `locations` |
 | **J4** | Site crawl | Configure crawl → job → results + export | `jobs`, `pages`, `crawled_data`, `page_links` |
 | **J5** | On-page audit | URLs → audit job → scores + `issues_json` → export | `jobs`, `seo_audits` |
+
+## J1–J5 in the current app
+
+| Journey | Where it lives |
+|---------|----------------|
+| **J1** | First-run `QWizard` in `crawlix.ui.onboarding` — data dir, master password (Argon2), disclaimer checkbox, politeness preset, optional **Ollama URL + enable** persisted to `settings` (`ollama_base_url`, `ollama_enabled`). |
+| **J2** | `UnlockDialog` on each launch when the DB exists; recovery copy explains backup-only reset. |
+| **J3** | **File → New project…** opens `NewProjectDialog` — name, default domain, optional **primary `Location`** (NAP seed); slug collision handled via `crawlix.utils.slug.unique_project_slug`. |
+| **J4** | **Crawl** page — queue job, live progress, **pages table**, **Export pages / links CSV**, **Job dock → Cancel selected job** (sets `jobs.cancel_requested`). |
+| **J5** | **Audit** page — job over crawled pages, **results table**, **Export audits CSV/JSON**, cancel supported in `AuditWorker` between pages. |
+| **Settings** | **Ollama** URL + enable can be edited after wizard (`Save Ollama settings`). |
+| **Dashboard** | Project summary: page count, job count, audit count, last crawl timestamp. |
 | **J6** | Keywords + SERP | Seeds → SERP snapshot → gzip HTML + parsed rows | `keywords`, `serp_results` |
 | **J7** | Rank over time | Runs → charts → export history | `rankings`, `serp_results` |
 | **J8** | Citation / NAP | Golden NAP → sources → matrix job → export | `citation_checks`, `citation_sources` |

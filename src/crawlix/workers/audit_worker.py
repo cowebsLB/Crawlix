@@ -42,7 +42,19 @@ class AuditWorker(QRunnable):
             job.status = "running"
             session.commit()
             n = len(page_ids)
+
+            def cancel_check() -> bool:
+                session.expire_all()
+                j = session.get(Job, self.job_id)
+                return bool(j and j.cancel_requested)
+
             for i, pid in enumerate(page_ids):
+                if cancel_check():
+                    job.status = "cancelled"
+                    job.progress_pct = 100.0 * i / max(n, 1)
+                    session.commit()
+                    self.bus.finished.emit(self.job_id, {"cancelled": True, "audited": i})
+                    return
                 page = session.get(Page, pid)
                 if not page:
                     continue
