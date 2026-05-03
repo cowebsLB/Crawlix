@@ -41,7 +41,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from crawlix.config import app_db_path, default_data_dir
 from crawlix.db.bootstrap import upgrade_database
-from crawlix.db.models import Job, Keyword, Location, Page, Project, SeoAudit
+from crawlix.db.models import Job, Keyword, Location, Page, Project, SeoAudit, SerpResult
 from crawlix.db.session import make_engine
 from crawlix.db.settings_store import get_value, set_value
 from crawlix.services.citations.seed import seed_builtin_sources
@@ -294,6 +294,9 @@ class MainWindow(QMainWindow):
         self._refresh_dashboard_stats()
         self._refresh_crawl_pages_table()
         self._refresh_audit_results_table()
+        self._refresh_keywords_table()
+        self._refresh_serp_tab_lists()
+        self._rebuild_rank_chart()
 
     def _reload_projects_combo(self) -> None:
         self._project_combo.clear()
@@ -308,6 +311,9 @@ class MainWindow(QMainWindow):
         self._refresh_dashboard_stats()
         self._refresh_crawl_pages_table()
         self._refresh_audit_results_table()
+        self._refresh_keywords_table()
+        self._refresh_serp_tab_lists()
+        self._rebuild_rank_chart()
 
     def _page_header(self, title: str, subtitle: str | None = None) -> QWidget:
         """Plain-text page title (avoid HTML auto-rich-text that breaks contrast)."""
@@ -531,14 +537,34 @@ class MainWindow(QMainWindow):
         self._kw_phrase = QLineEdit()
         kf = QFormLayout()
         kf.addRow(self.tr("New keyword:"), self._kw_phrase)
+        krow = QHBoxLayout()
         kb = QPushButton(self.tr("Add keyword"))
         kb.clicked.connect(self._add_keyword)
+        krow.addWidget(kb)
+        kr = QPushButton(self.tr("Refresh keywords"))
+        kr.clicked.connect(self._refresh_keywords_table)
+        krow.addWidget(kr)
+        krow.addStretch()
         kvl.addLayout(kf)
-        kvl.addWidget(kb)
+        kvl.addLayout(krow)
+        self._kw_table = QTableWidget(0, 5)
+        self._kw_table.setHorizontalHeaderLabels(
+            [self.tr("ID"), self.tr("Phrase"), self.tr("Locale"), self.tr("Device"), self.tr("Archived")]
+        )
+        self._kw_table.setColumnWidth(1, 360)
+        kvl.addWidget(self._kw_table, 1)
         tabs.addTab(kw_tab, self.tr("Keywords"))
 
         serp_tab = QWidget()
         svl = QVBoxLayout(serp_tab)
+        sk = QHBoxLayout()
+        sk.addWidget(QLabel(self.tr("Keyword for snapshot:")))
+        self._serp_kw_combo = QComboBox()
+        sk.addWidget(self._serp_kw_combo, 1)
+        skr = QPushButton(self.tr("Refresh lists"))
+        skr.clicked.connect(self._refresh_serp_tab_lists)
+        sk.addWidget(skr)
+        svl.addLayout(sk)
         self._serp_btn = QPushButton(self.tr("Run SERP snapshot (demo parser)"))
         self._serp_btn.clicked.connect(self._run_serp)
         svl.addWidget(self._serp_btn)
@@ -551,28 +577,158 @@ class MainWindow(QMainWindow):
         self._serp_status.setVisible(False)
         svl.addWidget(self._serp_progress)
         svl.addWidget(self._serp_status)
-        svl.addStretch()
+        self._serp_snapshots_table = QTableWidget(0, 5)
+        self._serp_snapshots_table.setHorizontalHeaderLabels(
+            [
+                self.tr("Snapshot ID"),
+                self.tr("Keyword"),
+                self.tr("Fetched"),
+                self.tr("Status"),
+                self.tr("Organic rows"),
+            ]
+        )
+        self._serp_snapshots_table.setColumnWidth(1, 220)
+        svl.addWidget(self._serp_snapshots_table, 1)
         tabs.addTab(serp_tab, self.tr("SERP snapshots"))
 
         rank_tab = QWidget()
         rvl = QVBoxLayout(rank_tab)
+        rr = QHBoxLayout()
+        rrb = QPushButton(self.tr("Refresh chart"))
+        rrb.clicked.connect(self._rebuild_rank_chart)
+        rr.addWidget(rrb)
+        rr.addStretch()
+        rvl.addLayout(rr)
         s_theme = self._session()
         try:
             chart_theme = get_value(s_theme, "ui_theme", "dark") or "dark"
         finally:
             s_theme.close()
-        fig = Figure(figsize=(5, 3))
+        self._rank_fig = Figure(figsize=(6, 3.2))
+        self._rank_chart_theme = chart_theme
+        self._rank_canvas = FigureCanvasQTAgg(self._rank_fig)
+        rvl.addWidget(self._rank_canvas, 1)
+        tabs.addTab(rank_tab, self.tr("Rank history"))
+        self._rebuild_rank_chart()
+
+        l.addWidget(tabs)
+        return w
+
+    def _refresh_serp_tab_lists(self) -> None:
+        self._refresh_serp_keyword_combo()
+        self._refresh_serp_snapshots_table()
+
+    def _refresh_keywords_table(self) -> None:
+        if not getattr(self, "_kw_table", None):
+            return
+        if not self._current_project_id:
+            self._kw_table.setRowCount(0)
+            return
+        s = self._session()
+        try:
+            kws = (
+                s.execute(
+                    select(Keyword)
+                    .where(Keyword.project_id == self._current_project_id)
+                    .order_by(Keyword.phrase.asc())
+                    .limit(500)
+                )
+                .scalars()
+                .all()
+            )
+            self._kw_table.setRowCount(len(kws))
+            for r, k in enumerate(kws):
+                self._kw_table.setItem(r, 0, QTableWidgetItem(str(k.id)))
+                self._kw_table.setItem(r, 1, QTableWidgetItem(k.phrase))
+                self._kw_table.setItem(r, 2, QTableWidgetItem(k.locale or ""))
+                self._kw_table.setItem(r, 3, QTableWidgetItem(k.device or ""))
+                arch = self.tr("yes") if k.archived_at else ""
+                self._kw_table.setItem(r, 4, QTableWidgetItem(arch))
+        finally:
+            s.close()
+
+    def _refresh_serp_keyword_combo(self) -> None:
+        if not getattr(self, "_serp_kw_combo", None):
+            return
+        self._serp_kw_combo.blockSignals(True)
+        self._serp_kw_combo.clear()
+        if not self._current_project_id:
+            self._serp_kw_combo.addItem(self.tr("(select a project)"), None)
+            self._serp_kw_combo.blockSignals(False)
+            return
+        s = self._session()
+        try:
+            kws = (
+                s.execute(
+                    select(Keyword)
+                    .where(
+                        Keyword.project_id == self._current_project_id,
+                        Keyword.archived_at.is_(None),
+                    )
+                    .order_by(Keyword.phrase.asc())
+                )
+                .scalars()
+                .all()
+            )
+            for k in kws:
+                self._serp_kw_combo.addItem(k.phrase[:120], k.id)
+            if not kws:
+                self._serp_kw_combo.addItem(self.tr("(add a keyword first)"), None)
+        finally:
+            s.close()
+        self._serp_kw_combo.blockSignals(False)
+
+    def _refresh_serp_snapshots_table(self) -> None:
+        if not getattr(self, "_serp_snapshots_table", None):
+            return
+        if not self._current_project_id:
+            self._serp_snapshots_table.setRowCount(0)
+            return
+        s = self._session()
+        try:
+            rows = (
+                s.execute(
+                    select(SerpResult, Keyword.phrase)
+                    .join(Keyword, SerpResult.keyword_id == Keyword.id)
+                    .where(Keyword.project_id == self._current_project_id)
+                    .order_by(SerpResult.fetched_at.desc())
+                    .limit(200)
+                )
+                .all()
+            )
+            self._serp_snapshots_table.setRowCount(len(rows))
+            for r, (sr, phrase) in enumerate(rows):
+                organic = (sr.results_json or {}).get("organic") or []
+                n_org = len(organic) if isinstance(organic, list) else 0
+                self._serp_snapshots_table.setItem(r, 0, QTableWidgetItem(str(sr.id)))
+                self._serp_snapshots_table.setItem(r, 1, QTableWidgetItem(phrase))
+                fts = sr.fetched_at.isoformat() if sr.fetched_at else ""
+                self._serp_snapshots_table.setItem(r, 2, QTableWidgetItem(fts))
+                self._serp_snapshots_table.setItem(r, 3, QTableWidgetItem(sr.status))
+                self._serp_snapshots_table.setItem(r, 4, QTableWidgetItem(str(n_org)))
+        finally:
+            s.close()
+
+    def _rebuild_rank_chart(self) -> None:
+        if not getattr(self, "_rank_fig", None) or not getattr(self, "_rank_canvas", None):
+            return
+        s_theme = self._session()
+        try:
+            chart_theme = get_value(s_theme, "ui_theme", "dark") or "dark"
+        finally:
+            s_theme.close()
+        self._rank_chart_theme = chart_theme
+        self._rank_fig.clear()
+        ax = self._rank_fig.add_subplot(111)
         if chart_theme == "light":
-            fig.patch.set_facecolor("#f3f3f3")
-            ax = fig.add_subplot(111)
+            self._rank_fig.patch.set_facecolor("#f3f3f3")
             ax.set_facecolor("#ffffff")
             ax.tick_params(colors="#333333")
             ax.title.set_color("#1a1a1a")
             spine_c = "#888888"
             line_c = "#006cbd"
         else:
-            fig.patch.set_facecolor("#252526")
-            ax = fig.add_subplot(111)
+            self._rank_fig.patch.set_facecolor("#252526")
             ax.set_facecolor("#1e1e1e")
             ax.tick_params(colors="#e8e8e8")
             ax.title.set_color("#e8e8e8")
@@ -580,15 +736,55 @@ class MainWindow(QMainWindow):
             line_c = "#4ec9b0"
         for spine in ax.spines.values():
             spine.set_color(spine_c)
-        ax.set_title(self.tr("Rank history (sample)"))
-        ax.plot([1, 2, 3], [10, 8, 7], color=line_c)
+        ax.set_title(self.tr("SERP organic row count over snapshots (project)"))
+        ax.set_xlabel(self.tr("Snapshot index (oldest → newest)"))
+        ax.set_ylabel(self.tr("Organic URLs parsed"))
         ax.grid(True, alpha=0.25, color=spine_c)
-        canvas = FigureCanvasQTAgg(fig)
-        rvl.addWidget(canvas)
-        tabs.addTab(rank_tab, self.tr("Rank history"))
-
-        l.addWidget(tabs)
-        return w
+        if not self._current_project_id:
+            ax.text(
+                0.5,
+                0.5,
+                self.tr("Select a project."),
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                color=ax.title.get_color(),
+            )
+            self._rank_canvas.draw()
+            return
+        s = self._session()
+        try:
+            pts = (
+                s.execute(
+                    select(SerpResult.fetched_at, SerpResult.results_json)
+                    .join(Keyword, SerpResult.keyword_id == Keyword.id)
+                    .where(Keyword.project_id == self._current_project_id)
+                    .order_by(SerpResult.fetched_at.asc())
+                    .limit(100)
+                )
+                .all()
+            )
+        finally:
+            s.close()
+        if not pts:
+            ax.text(
+                0.5,
+                0.5,
+                self.tr("No SERP snapshots yet — run a snapshot from the SERP tab."),
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                color=ax.title.get_color(),
+            )
+            self._rank_canvas.draw()
+            return
+        ys: list[int] = []
+        for _ft, rj in pts:
+            organic = (rj or {}).get("organic") or []
+            ys.append(len(organic) if isinstance(organic, list) else 0)
+        xs = list(range(1, len(ys) + 1))
+        ax.plot(xs, ys, color=line_c, marker="o", markersize=3)
+        self._rank_canvas.draw()
 
     def _add_keyword(self) -> None:
         if not self._current_project_id:
@@ -603,17 +799,21 @@ class MainWindow(QMainWindow):
         finally:
             s.close()
         self._kw_phrase.clear()
+        self._refresh_keywords_table()
+        self._refresh_serp_keyword_combo()
 
     def _run_serp(self) -> None:
         if not self._current_project_id:
             return
+        kid = self._serp_kw_combo.currentData() if getattr(self, "_serp_kw_combo", None) else None
+        if kid is None:
+            QMessageBox.information(self, self.tr("SERP"), self.tr("Add or select a keyword first."))
+            return
         s = self._session()
         try:
-            kid = s.execute(
-                select(Keyword.id).where(Keyword.project_id == self._current_project_id).limit(1)
-            ).scalar_one_or_none()
-            if not kid:
-                QMessageBox.information(self, self.tr("SERP"), self.tr("Add a keyword first."))
+            kw = s.get(Keyword, int(kid))
+            if not kw or kw.project_id != self._current_project_id or kw.archived_at is not None:
+                QMessageBox.warning(self, self.tr("SERP"), self.tr("Invalid keyword for this project."))
                 return
             job = Job(
                 project_id=self._current_project_id,
@@ -766,6 +966,7 @@ class MainWindow(QMainWindow):
         finally:
             s.close()
         self._reload_styles()
+        self._rebuild_rank_chart()
 
     def _save_ollama_settings(self) -> None:
         s = self._session()
@@ -1056,6 +1257,8 @@ class MainWindow(QMainWindow):
             self._serp_btn.setEnabled(True)
             self._serp_progress.setVisible(False)
             self._serp_status.setVisible(False)
+            self._refresh_serp_snapshots_table()
+            self._rebuild_rank_chart()
             QMessageBox.information(self, self.tr("SERP"), self.tr("Snapshot stored (best-effort)."))
 
     def _on_job_failed(self, job_id: int, code: str, msg: str) -> None:

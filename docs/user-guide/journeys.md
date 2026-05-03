@@ -9,6 +9,15 @@ Each journey maps to **tests**, **docs**, and **release checklists**. Keep in sy
 | **J3** | New project | Create project (name, domain) → optional location | `projects`, `locations` |
 | **J4** | Site crawl | Configure crawl → job → results + export | `jobs`, `pages`, `crawled_data`, `page_links` |
 | **J5** | On-page audit | URLs → audit job → scores + `issues_json` → export | `jobs`, `seo_audits` |
+| **J6** | Keywords + SERP | Seeds → SERP snapshot → gzip HTML + parsed rows | `keywords`, `serp_results` |
+| **J7** | Rank over time | Runs → charts → export history | `rankings`, `serp_results` |
+| **J8** | Citation / NAP | Golden NAP → sources → matrix job → export | `citation_checks`, `citation_sources` |
+| **J9** | Integrations | Connect GSC/GA4 → sync → data in UI | `integration_accounts`, snapshots |
+| **J10** | AI assist | Ollama action → timeout handling → `ai_cache` | `ai_cache` |
+| **J11** | Reporting | Pick outputs → CSV/Markdown/PDF → handoff | exports, optional `reports` |
+| **J12** | Update | Check update → verify checksum → confirm → install | temp, `settings` |
+| **J13** | Maintenance | Retention purge → VACUUM → backup | DB file |
+| **J14** | Uninstall / wipe | OS removal + optional delete all data | N/A |
 
 ## J1–J5 in the current app
 
@@ -21,15 +30,13 @@ Each journey maps to **tests**, **docs**, and **release checklists**. Keep in sy
 | **J5** | **Audit** page — job over crawled pages, **results table**, **Export audits CSV/JSON**, cancel supported in `AuditWorker` between pages. |
 | **Settings** | **Ollama** URL + enable can be edited after wizard (`Save Ollama settings`). |
 | **Dashboard** | Project summary: page count, job count, audit count, last crawl timestamp. |
-| **J6** | Keywords + SERP | Seeds → SERP snapshot → gzip HTML + parsed rows | `keywords`, `serp_results` |
-| **J7** | Rank over time | Runs → charts → export history | `rankings`, `serp_results` |
-| **J8** | Citation / NAP | Golden NAP → sources → matrix job → export | `citation_checks`, `citation_sources` |
-| **J9** | Integrations | Connect GSC/GA4 → sync → data in UI | `integration_accounts`, snapshots |
-| **J10** | AI assist | Ollama action → timeout handling → `ai_cache` | `ai_cache` |
-| **J11** | Reporting | Pick outputs → CSV/Markdown/PDF → handoff | exports, optional `reports` |
-| **J12** | Update | Check update → verify checksum → confirm → install | temp, `settings` |
-| **J13** | Maintenance | Retention purge → VACUUM → backup | DB file |
-| **J14** | Uninstall / wipe | OS removal + optional delete all data | N/A |
+
+## J6–J7 in the current app
+
+| Journey | Where it lives |
+|---------|----------------|
+| **J6** | **Keywords** tab: table of project keywords + refresh; **SERP snapshots** tab: keyword picker (`QComboBox`), run snapshot job, history table (fetched time, status, organic hit count). Storage unchanged: `serp_results` + gzip HTML via `fetch_serp_placeholder`. |
+| **J7** | **Rank history** tab: Matplotlib chart of **organic URL count per SERP snapshot** over time for the project (stand-in until `rankings` rows are written from a dedicated rank tracker). |
 
 ## Doc chapters (suggested)
 

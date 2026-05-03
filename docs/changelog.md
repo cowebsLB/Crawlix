@@ -10,6 +10,7 @@ All notable changes to this project are documented in this file. Format follows 
 
 ### Added
 
+- **Keywords / SERP / rank (J6–J7 UI):** keyword table + refresh; SERP keyword picker and snapshot history table; rank chart from SERP organic counts over snapshots (proxy until `rankings` is populated); refreshes on project change and after SERP job completion.
 - Root **[INDEX.md](../INDEX.md)** as the documentation hub linking all docs.
 - **[docs/setup.md](setup.md)** — install, run, migrations, first launch.
 - **[docs/known-limitations.md](known-limitations.md)** — scope and deferred items.

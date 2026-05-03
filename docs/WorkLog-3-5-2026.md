@@ -25,8 +25,15 @@
 - **SERP and light tasks** use a **`serp` job type** plus **`SimpleTaskWorker`** for non-persisted tasks (export, updates) so the UI stays responsive without blocking the Qt event loop.
 - **Changelog** lives under **`docs/changelog.md`** for now (no separate root `CHANGELOG.md` unless release automation requires it).
 
+## Iteration — same day (keywords / SERP / rank + housekeeping)
+
+- **Standing preference (user):** keep **committing and pushing** after substantive iterations, and **append this worklog** each time so the paper trail stays on one dated file (`WorkLog-3-5-2026.md`) until the calendar day changes.
+- **J6–J7 (UI):** **Keywords** tab — table of project keywords (id, phrase, locale, device, archived) + **Refresh** + refresh after add. **SERP snapshots** tab — **keyword picker** (`QComboBox`), **Refresh lists**, history table (snapshot id, keyword, fetched time, status, organic row count), validation that the selected keyword belongs to the current project and is not archived. **Rank history** tab — Matplotlib chart rebuilt from **organic URL counts per SERP snapshot** (oldest→newest index), empty-state copy when no data; **Refresh chart** button; chart colors follow theme and **rebuild on theme save** and **after successful SERP job**.
+- **Docs:** [`docs/user-guide/journeys.md`](user-guide/journeys.md) — restored full **J1–J14** rows in the master table; removed duplicate/misplaced rows under the J1–J5 map; added **J6–J7 in the current app** mapping.
+
 ## Next steps
 
 - Per-journey chapters under `docs/user-guide/` (see [`journeys.md`](user-guide/journeys.md) “Doc chapters”) as flows stabilize.
 - Screenshots in [`docs/ui/overview.md`](ui/overview.md) when the visual design is frozen.
 - Optional root `CHANGELOG.md` mirroring `docs/changelog.md` if you want GitHub Releases to pick it up automatically.
+- **J7 depth:** write real **`rankings`** rows from SERP/domain match rules (or manual rank capture) and plot position over time instead of the organic-count proxy.

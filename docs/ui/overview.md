@@ -8,6 +8,7 @@
 - **Content:** `QStackedWidget` — each page uses a **plain-text title** + optional subtitle (no HTML headings in labels, for theme-safe contrast).
 - **Job dock (bottom):** tabs **Jobs** (table: id, type, %, status, project) | **Log** (timestamped lines).
 - **Inline progress:** **Crawl**, **Audit**, and **Keywords → SERP** show a **progress bar** and status text while the matching job runs; **Reports** export shows an indeterminate bar; **Check for updates** shows status text in the **status bar**.
+- **Keywords stack:** **Keywords** tab lists phrases in a table; **SERP snapshots** tab has a keyword picker, snapshot history table, and run button; **Rank history** plots SERP-derived activity (organic row counts) until real `rankings` data exists.
 - **Status bar:** politeness preset label (and transient messages during update check).
 
 ## Theming
