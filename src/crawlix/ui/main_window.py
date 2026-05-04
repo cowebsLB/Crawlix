@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -49,6 +50,7 @@ from crawlix.db.models import (
     Location,
     Page,
     Project,
+    Ranking,
     SeoAudit,
     SerpResult,
 )
@@ -311,7 +313,6 @@ class MainWindow(QMainWindow):
         self._refresh_audit_results_table()
         self._refresh_keywords_table()
         self._refresh_serp_tab_lists()
-        self._rebuild_rank_chart()
         self._refresh_citations_page()
 
     def _reload_projects_combo(self) -> None:
@@ -329,7 +330,6 @@ class MainWindow(QMainWindow):
         self._refresh_audit_results_table()
         self._refresh_keywords_table()
         self._refresh_serp_tab_lists()
-        self._rebuild_rank_chart()
         self._refresh_citations_page()
 
     def _page_header(self, title: str, subtitle: str | None = None) -> QWidget:
@@ -625,6 +625,12 @@ class MainWindow(QMainWindow):
 
         rank_tab = QWidget()
         rvl = QVBoxLayout(rank_tab)
+        rkw = QHBoxLayout()
+        rkw.addWidget(QLabel(self.tr("Keyword for chart:")))
+        self._rank_kw_combo = QComboBox()
+        self._rank_kw_combo.currentIndexChanged.connect(self._rebuild_rank_chart)
+        rkw.addWidget(self._rank_kw_combo, 1)
+        rvl.addLayout(rkw)
         rr = QHBoxLayout()
         rrb = QPushButton(self.tr("Refresh chart"))
         rrb.clicked.connect(self._rebuild_rank_chart)
@@ -641,7 +647,7 @@ class MainWindow(QMainWindow):
         self._rank_canvas = FigureCanvasQTAgg(self._rank_fig)
         rvl.addWidget(self._rank_canvas, 1)
         tabs.addTab(rank_tab, self.tr("Rank history"))
-        self._rebuild_rank_chart()
+        self._refresh_serp_tab_lists()
 
         l.addWidget(tabs)
         return w
@@ -649,6 +655,7 @@ class MainWindow(QMainWindow):
     def _refresh_serp_tab_lists(self) -> None:
         self._refresh_serp_keyword_combo()
         self._refresh_serp_snapshots_table()
+        self._rebuild_rank_chart()
 
     def _refresh_keywords_table(self) -> None:
         if not getattr(self, "_kw_table", None):
@@ -680,17 +687,26 @@ class MainWindow(QMainWindow):
             s.close()
 
     def _refresh_serp_keyword_combo(self) -> None:
-        if not getattr(self, "_serp_kw_combo", None):
+        combos: list[QComboBox] = []
+        if getattr(self, "_serp_kw_combo", None):
+            combos.append(self._serp_kw_combo)
+        if getattr(self, "_rank_kw_combo", None):
+            combos.append(self._rank_kw_combo)
+        if not combos:
             return
-        self._serp_kw_combo.blockSignals(True)
-        self._serp_kw_combo.clear()
+        preserved = {id(c): c.currentData() for c in combos}
+        for c in combos:
+            c.blockSignals(True)
+            c.clear()
         if not self._current_project_id:
-            self._serp_kw_combo.addItem(self.tr("(select a project)"), None)
-            self._serp_kw_combo.blockSignals(False)
+            for c in combos:
+                c.addItem(self.tr("(select a project)"), None)
+            for c in combos:
+                c.blockSignals(False)
             return
         s = self._session()
         try:
-            kws = (
+            kws = list(
                 s.execute(
                     select(Keyword)
                     .where(
@@ -702,13 +718,23 @@ class MainWindow(QMainWindow):
                 .scalars()
                 .all()
             )
-            for k in kws:
-                self._serp_kw_combo.addItem(k.phrase[:120], k.id)
-            if not kws:
-                self._serp_kw_combo.addItem(self.tr("(add a keyword first)"), None)
         finally:
             s.close()
-        self._serp_kw_combo.blockSignals(False)
+        for c in combos:
+            for k in kws:
+                c.addItem(k.phrase[:120], k.id)
+            if not kws:
+                c.addItem(self.tr("(add a keyword first)"), None)
+        for c in combos:
+            c.blockSignals(False)
+        for c in combos:
+            prev = preserved.get(id(c))
+            if prev is not None:
+                idx = c.findData(prev)
+                if idx >= 0:
+                    c.blockSignals(True)
+                    c.setCurrentIndex(idx)
+                    c.blockSignals(False)
 
     def _refresh_serp_snapshots_table(self) -> None:
         if not getattr(self, "_serp_snapshots_table", None):
@@ -768,9 +794,9 @@ class MainWindow(QMainWindow):
             line_c = "#4ec9b0"
         for spine in ax.spines.values():
             spine.set_color(spine_c)
-        ax.set_title(self.tr("SERP organic row count over snapshots (project)"))
+        ax.set_title(self.tr("Rank position vs project domain (selected keyword)"))
         ax.set_xlabel(self.tr("Snapshot index (oldest → newest)"))
-        ax.set_ylabel(self.tr("Organic URLs parsed"))
+        ax.set_ylabel(self.tr("Rank (1 = best); gaps = not in top organic"))
         ax.grid(True, alpha=0.25, color=spine_c)
         if not self._current_project_id:
             ax.text(
@@ -784,25 +810,12 @@ class MainWindow(QMainWindow):
             )
             self._rank_canvas.draw()
             return
-        s = self._session()
-        try:
-            pts = (
-                s.execute(
-                    select(SerpResult.fetched_at, SerpResult.results_json)
-                    .join(Keyword, SerpResult.keyword_id == Keyword.id)
-                    .where(Keyword.project_id == self._current_project_id)
-                    .order_by(SerpResult.fetched_at.asc())
-                    .limit(100)
-                )
-                .all()
-            )
-        finally:
-            s.close()
-        if not pts:
+        kid = self._rank_kw_combo.currentData() if getattr(self, "_rank_kw_combo", None) else None
+        if kid is None:
             ax.text(
                 0.5,
                 0.5,
-                self.tr("No SERP snapshots yet — run a snapshot from the SERP tab."),
+                self.tr("Select a keyword for the chart."),
                 transform=ax.transAxes,
                 ha="center",
                 va="center",
@@ -810,12 +823,40 @@ class MainWindow(QMainWindow):
             )
             self._rank_canvas.draw()
             return
-        ys: list[int] = []
-        for _ft, rj in pts:
-            organic = (rj or {}).get("organic") or []
-            ys.append(len(organic) if isinstance(organic, list) else 0)
+        s = self._session()
+        try:
+            rows = (
+                s.execute(
+                    select(Ranking.position, Ranking.tracked_at, Ranking.degraded)
+                    .where(Ranking.keyword_id == int(kid))
+                    .order_by(Ranking.tracked_at.asc())
+                    .limit(100)
+                )
+                .all()
+            )
+        finally:
+            s.close()
+        if not rows:
+            ax.text(
+                0.5,
+                0.5,
+                self.tr(
+                    "No rank rows yet — run a SERP snapshot. "
+                    "Rank matches the project default domain to organic URLs."
+                ),
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                color=ax.title.get_color(),
+            )
+            self._rank_canvas.draw()
+            return
+        ys: list[float] = []
+        for pos, _ta, _deg in rows:
+            ys.append(float(pos) if pos is not None else math.nan)
         xs = list(range(1, len(ys) + 1))
         ax.plot(xs, ys, color=line_c, marker="o", markersize=3)
+        ax.invert_yaxis()
         self._rank_canvas.draw()
 
     def _add_keyword(self) -> None:

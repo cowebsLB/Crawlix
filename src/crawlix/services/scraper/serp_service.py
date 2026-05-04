@@ -9,8 +9,9 @@ from typing import Any
 import httpx
 from sqlalchemy.orm import Session
 
-from crawlix.db.models import Keyword, SerpResult
+from crawlix.db.models import Keyword, Project, Ranking, SerpResult
 from crawlix.services.net.ssrf import assert_url_safe_for_fetch
+from crawlix.services.scraper.ranking_from_serp import compute_rank_for_project_domain
 from crawlix.utils.gzip_util import gzip_bytes
 
 
@@ -46,6 +47,27 @@ def fetch_serp_placeholder(
         status="degraded" if resp.status_code != 200 else "ok",
     )
     session.add(sr)
+    session.flush()
+    pr = session.get(Project, kw.project_id) if kw.project_id else None
+    dom = (pr.default_domain or "").strip() if pr else None
+    top = organic[:20]
+    pos, murl = compute_rank_for_project_domain(top, dom if dom else None)
+    has_rows = bool(top)
+    degraded = pos is None and has_rows
+    murl_store = murl[:2048] if murl else None
+    session.add(
+        Ranking(
+            keyword_id=keyword_id,
+            position=pos,
+            matched_url=murl_store,
+            search_engine=search_engine,
+            geo_location_label=kw.locale,
+            device=kw.device,
+            serp_result_id=sr.id,
+            provenance="automated_serp",
+            degraded=degraded,
+        )
+    )
     session.commit()
     session.refresh(sr)
     return sr.id

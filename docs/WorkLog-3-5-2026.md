@@ -52,10 +52,17 @@
 
 - **GitHub Actions:** Latest **`CI`** runs on `main` failed the **Ruff** step (E501 line length, I001 import order). Fixed by wrapping long strings / dicts, splitting **`site_audit`** import in **`audit_worker`**, **`ruff check --fix`** on **`audit_worker`**, and **`analyzer` → `citations`** import order in **`main_window`**.
 
+## Iteration — J7 real rankings
+
+- **`ranking_from_serp`:** hostname / subdomain match to **`projects.default_domain`**, DuckDuckGo **`uddg=`** unwrap, **`compute_rank_for_project_domain`**.
+- **`fetch_serp_placeholder`:** after **`SerpResult`** flush, inserts **`Ranking`** (`serp_result_id`, `position` or null, `degraded` when organic rows exist but no domain match).
+- **UI:** **Rank history** keyword **`QComboBox`** (kept in sync with SERP keyword combos via **`_refresh_serp_keyword_combo`**); chart uses **`rankings`** ordered by **`tracked_at`**, **`invert_yaxis`**, **`math.nan`** for misses; **`_refresh_serp_tab_lists`** ends with chart rebuild.
+- **Tests:** `tests/unit/test_ranking_from_serp.py`.
+
 ## Next steps
 
 - Per-journey chapters under `docs/user-guide/` (see [`journeys.md`](user-guide/journeys.md) “Doc chapters”) as flows stabilize.
 - Screenshots in [`docs/ui/overview.md`](ui/overview.md) when the visual design is frozen.
 - Optional root `CHANGELOG.md` mirroring `docs/changelog.md` if you want GitHub Releases to pick it up automatically.
-- **J7 depth:** write real **`rankings`** rows from SERP/domain match rules (or manual rank capture) and plot position over time instead of the organic-count proxy.
+- **J7 depth:** multi-property / competitor URLs; manual rank override; export rank CSV.
 - **J8 depth:** optional **NAP diff** vs crawled page; **Playwright** path for `requires_playwright` sources when policy allows.

@@ -10,7 +10,7 @@ Each journey maps to **tests**, **docs**, and **release checklists**. Keep in sy
 | **J4** | Site crawl | Configure crawl → job → results + export | `jobs`, `pages`, `crawled_data`, `page_links` |
 | **J5** | On-page audit | URLs → audit job → scores + `issues_json` → export | `jobs`, `seo_audits` |
 | **J6** | Keywords + SERP | Seeds → SERP snapshot → gzip HTML + parsed rows | `keywords`, `serp_results` |
-| **J7** | Rank over time | Runs → charts → export history | `rankings`, `serp_results` |
+| **J7** | Rank over time | SERP → domain match → `rankings` → chart → export (future) | `rankings`, `serp_results` |
 | **J8** | Citation / NAP | Golden NAP → sources → matrix job → export | `citation_checks`, `citation_sources` |
 | **J9** | Integrations | Connect GSC/GA4 → sync → data in UI | `integration_accounts`, snapshots |
 | **J10** | AI assist | Ollama action → timeout handling → `ai_cache` | `ai_cache` |
@@ -36,7 +36,7 @@ Each journey maps to **tests**, **docs**, and **release checklists**. Keep in sy
 | Journey | Where it lives |
 |---------|----------------|
 | **J6** | **Keywords** tab: table of project keywords + refresh; **SERP snapshots** tab: keyword picker (`QComboBox`), run snapshot job, history table (fetched time, status, organic hit count). Storage unchanged: `serp_results` + gzip HTML via `fetch_serp_placeholder`. |
-| **J7** | **Rank history** tab: Matplotlib chart of **organic URL count per SERP snapshot** over time for the project (stand-in until `rankings` rows are written from a dedicated rank tracker). |
+| **J7** | **Rank history** tab: **keyword picker** + Matplotlib chart of **`rankings.position`** (1 = best) over time vs **project `default_domain`** (subdomain match; DuckDuckGo `uddg=` unwrap). One **`Ranking`** row per SERP snapshot from **`fetch_serp_placeholder`**; gaps (`NaN`) when the domain is not in the parsed organic set. |
 
 ## J8 in the current app
 

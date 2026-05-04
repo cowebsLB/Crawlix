@@ -13,7 +13,7 @@ All notable changes to this project are documented in this file. Format follows 
 
 - **Citations (J8):** **Citations** page with tabs for **built-in sources** (YAML → DB), **locations (NAP)**, **check history**; refresh; **Export built-in sources CSV**; **Run citation matrix** queues a `Job` of type **`citation`** — **`CitationMatrixWorker`** writes **`citation_checks`** (HTTP GET for non-Playwright templates; Playwright-only sources recorded as **skipped**; cancel via job dock). **Unlock** runs `seed_builtin_sources` for older DBs.
 - **Crawl / audit depth:** optional **`crawl_depth`** on **`pages`** (Alembic `c7e2a1b4f9d0`); BFS records depth; Crawl UI **max depth** spin; pages CSV includes depth; **`robots_check`** fetch cap; **`site_audit`** internal link counts on Crawl and Audit tables; audit worker batches robots checks.
-- **Keywords / SERP / rank (J6–J7 UI):** keyword table + refresh; SERP keyword picker and snapshot history table; rank chart from SERP organic counts over snapshots (proxy until `rankings` is populated); refreshes on project change and after SERP job completion.
+- **Keywords / SERP / rank (J6–J7):** keyword table + refresh; SERP picker + snapshot history; **`ranking_from_serp`** writes **`rankings`** after each snapshot (domain match + DDG redirect unwrap); **Rank history** chart plots **`rankings.position`** per selected keyword (inverted Y); shared keyword combo refresh for SERP + rank tabs.
 - Root **[INDEX.md](../INDEX.md)** as the documentation hub linking all docs.
 - **[docs/setup.md](setup.md)** — install, run, migrations, first launch.
 - **[docs/known-limitations.md](known-limitations.md)** — scope and deferred items.
