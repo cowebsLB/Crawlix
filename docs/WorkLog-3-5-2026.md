@@ -1,5 +1,7 @@
 # Worklog — 3 May 2026
 
+**Continued on:** [`WorkLog-4-5-2026.md`](WorkLog-4-5-2026.md) — work from **4 May 2026** onward is logged there (this file stays the full record for **3 May**).
+
 ## Tasks completed
 
 - **Documentation hub:** Filled root [`INDEX.md`](../INDEX.md) with project overview, feature list, tech stack, setup pointers, and a complete map of all repository docs (including this worklog).
@@ -27,7 +29,7 @@
 
 ## Iteration — same day (keywords / SERP / rank + housekeeping)
 
-- **Standing preference (user):** keep **committing and pushing** after substantive iterations, and **append this worklog** each time so the paper trail stays on one dated file (`WorkLog-3-5-2026.md`) until the calendar day changes.
+- **Standing preference (user):** keep **committing and pushing** after substantive iterations, and **append the dated worklog** each time; after **4 May** use [`WorkLog-4-5-2026.md`](WorkLog-4-5-2026.md) (see link at top of this file).
 - **J6–J7 (UI):** **Keywords** tab — table of project keywords (id, phrase, locale, device, archived) + **Refresh** + refresh after add. **SERP snapshots** tab — **keyword picker** (`QComboBox`), **Refresh lists**, history table (snapshot id, keyword, fetched time, status, organic row count), validation that the selected keyword belongs to the current project and is not archived. **Rank history** tab — Matplotlib chart rebuilt from **organic URL counts per SERP snapshot** (oldest→newest index), empty-state copy when no data; **Refresh chart** button; chart colors follow theme and **rebuild on theme save** and **after successful SERP job**.
 - **Docs:** [`docs/user-guide/journeys.md`](user-guide/journeys.md) — restored full **J1–J14** rows in the master table; removed duplicate/misplaced rows under the J1–J5 map; added **J6–J7 in the current app** mapping.
 
@@ -38,31 +40,6 @@
 - **Tests:** `export_builtin_citation_sources_csv` covered in `tests/unit/test_exporters.py`.
 - **Docs:** [`docs/user-guide/journeys.md`](user-guide/journeys.md) — **J8 in the current app**; [`docs/changelog.md`](changelog.md); [`docs/architecture.md`](architecture.md) / [`docs/ui/overview.md`](ui/overview.md) aligned with citations export.
 
-## Iteration — citation matrix job (J8)
+## Next steps (as of end of 3 May)
 
-- **`CitationMatrixWorker`** (`src/crawlix/workers/citation_worker.py`): `Job.type == "citation"`; Cartesian product of project **locations** × enabled **built-in** `citation_sources`; **`expand_template`**; **`httpx`** + **`GlobalOutboundLimiter`**; **`CitationCheck`** rows (OK / error / skipped); **Nominatim** ~1.1s spacing; gzip bodies ≤120KB; **cancel** between cells.
-- **UI:** **Run citation matrix (HTTP)…** on Citations page, progress + status, confirmation dialog with counts; **`JobBus`** wired like SERP; completion summary (OK / errors / Playwright skipped).
-- **Tests:** `tests/unit/test_citation_placeholders.py` for template expansion.
-
-### Bundled same commit (crawl / audit)
-
-- **`pages.crawl_depth`**, Alembic migration, BFS + Crawl UI max depth, CSV export column, **`robots_check`**, **`site_audit`** inbound/outbound counts on Crawl and Audit tables, audit worker robots batching; tests `test_site_audit.py`.
-
-## Iteration — CI (Ruff) green
-
-- **GitHub Actions:** Latest **`CI`** runs on `main` failed the **Ruff** step (E501 line length, I001 import order). Fixed by wrapping long strings / dicts, splitting **`site_audit`** import in **`audit_worker`**, **`ruff check --fix`** on **`audit_worker`**, and **`analyzer` → `citations`** import order in **`main_window`**.
-
-## Iteration — J7 real rankings
-
-- **`ranking_from_serp`:** hostname / subdomain match to **`projects.default_domain`**, DuckDuckGo **`uddg=`** unwrap, **`compute_rank_for_project_domain`**.
-- **`fetch_serp_placeholder`:** after **`SerpResult`** flush, inserts **`Ranking`** (`serp_result_id`, `position` or null, `degraded` when organic rows exist but no domain match).
-- **UI:** **Rank history** keyword **`QComboBox`** (kept in sync with SERP keyword combos via **`_refresh_serp_keyword_combo`**); chart uses **`rankings`** ordered by **`tracked_at`**, **`invert_yaxis`**, **`math.nan`** for misses; **`_refresh_serp_tab_lists`** ends with chart rebuild.
-- **Tests:** `tests/unit/test_ranking_from_serp.py`.
-
-## Next steps
-
-- Per-journey chapters under `docs/user-guide/` (see [`journeys.md`](user-guide/journeys.md) “Doc chapters”) as flows stabilize.
-- Screenshots in [`docs/ui/overview.md`](ui/overview.md) when the visual design is frozen.
-- Optional root `CHANGELOG.md` mirroring `docs/changelog.md` if you want GitHub Releases to pick it up automatically.
-- **J7 depth:** multi-property / competitor URLs; manual rank override; export rank CSV.
-- **J8 depth:** optional **NAP diff** vs crawled page; **Playwright** path for `requires_playwright` sources when policy allows.
+- Continued on **4 May** — see [`WorkLog-4-5-2026.md`](WorkLog-4-5-2026.md) for citation matrix, crawl depth / site audit bundle, CI Ruff fix, **J7 real rankings**, and updated next steps.
