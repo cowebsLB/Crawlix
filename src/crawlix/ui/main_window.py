@@ -55,6 +55,7 @@ from crawlix.db.models import (
 from crawlix.db.session import make_engine
 from crawlix.db.settings_store import get_value, set_value
 from crawlix.services.citations.seed import seed_builtin_sources
+from crawlix.services.analyzer.site_audit import inbound_internal_counts, outbound_internal_counts
 from crawlix.services.exporters import (
     export_builtin_citation_sources_csv,
     export_page_links_csv,
@@ -69,6 +70,7 @@ from crawlix.ui.project_dialog import NewProjectDialog
 from crawlix.ui.theme import apply_application_theme, sync_theme_to_qsettings
 from crawlix.utils.slug import unique_project_slug
 from crawlix.workers.audit_worker import AuditWorker
+from crawlix.workers.citation_worker import CitationMatrixWorker
 from crawlix.workers.crawl_worker import CrawlWorker
 from crawlix.workers.job_bus import JobBus
 from crawlix.workers.serp_worker import SerpWorker
@@ -102,6 +104,7 @@ class MainWindow(QMainWindow):
         self._crawl_active_job_id: int | None = None
         self._audit_active_job_id: int | None = None
         self._serp_active_job_id: int | None = None
+        self._citation_active_job_id: int | None = None
 
         if not self._bootstrap_database():
             return
@@ -370,7 +373,7 @@ class MainWindow(QMainWindow):
         l.addWidget(
             self._page_header(
                 self.tr("Crawl"),
-                self.tr("Map this site’s pages and links."),
+                self.tr("Map pages and links; depth and internal in/out counts reflect the crawl graph."),
             )
         )
         self._crawl_seeds = QLineEdit("https://example.com/")
@@ -405,9 +408,18 @@ class MainWindow(QMainWindow):
         crawl_btns.addWidget(el)
         crawl_btns.addStretch()
         l.addLayout(crawl_btns)
-        self._crawl_pages_table = QTableWidget(0, 5)
+        self._crawl_pages_table = QTableWidget(0, 8)
         self._crawl_pages_table.setHorizontalHeaderLabels(
-            [self.tr("ID"), self.tr("URL"), self.tr("Title"), self.tr("HTTP"), self.tr("Last crawled")]
+            [
+                self.tr("ID"),
+                self.tr("URL"),
+                self.tr("Title"),
+                self.tr("HTTP"),
+                self.tr("Depth"),
+                self.tr("In"),
+                self.tr("Out"),
+                self.tr("Last crawled"),
+            ]
         )
         self._crawl_pages_table.setColumnWidth(1, 320)
         l.addWidget(self._crawl_pages_table, 1)
@@ -458,7 +470,7 @@ class MainWindow(QMainWindow):
         l.addWidget(
             self._page_header(
                 self.tr("Audit"),
-                self.tr("On-page SEO scores and issues."),
+                self.tr("Scores, issues, crawl depth, and internal in/out link counts from the last crawl graph."),
             )
         )
         self._audit_btn = QPushButton(self.tr("Run audit on crawled pages"))
@@ -485,12 +497,15 @@ class MainWindow(QMainWindow):
         aud_btns.addWidget(ej)
         aud_btns.addStretch()
         l.addLayout(aud_btns)
-        self._audit_results_table = QTableWidget(0, 5)
+        self._audit_results_table = QTableWidget(0, 8)
         self._audit_results_table.setHorizontalHeaderLabels(
             [
                 self.tr("Audit ID"),
                 self.tr("Page ID"),
                 self.tr("URL"),
+                self.tr("Depth"),
+                self.tr("In"),
+                self.tr("Out"),
                 self.tr("Score"),
                 self.tr("Issues"),
             ]
@@ -506,7 +521,10 @@ class MainWindow(QMainWindow):
         try:
             pages = (
                 s.execute(
-                    select(Page.id).where(Page.project_id == self._current_project_id).limit(20)
+                    select(Page.id)
+                    .where(Page.project_id == self._current_project_id)
+                    .order_by(Page.id.asc())
+                    .limit(500)
                 )
                 .scalars()
                 .all()
@@ -852,6 +870,98 @@ class MainWindow(QMainWindow):
         self._pool.start(SerpWorker(jid, self._engine, self._bus))
         self._refresh_job_table()
 
+    def _run_citation_matrix(self) -> None:
+        if not self._current_project_id:
+            QMessageBox.information(
+                self,
+                self.tr("Citations"),
+                self.tr("Select a project first."),
+            )
+            return
+        s = self._session()
+        try:
+            n_loc = (
+                s.scalar(
+                    select(func.count())
+                    .select_from(Location)
+                    .where(Location.project_id == self._current_project_id)
+                )
+                or 0
+            )
+            n_src = (
+                s.scalar(
+                    select(func.count())
+                    .select_from(CitationSource)
+                    .where(
+                        CitationSource.is_builtin.is_(True),
+                        CitationSource.project_id.is_(None),
+                        CitationSource.enabled.is_(True),
+                    )
+                )
+                or 0
+            )
+        finally:
+            s.close()
+        if n_loc == 0:
+            QMessageBox.information(
+                self,
+                self.tr("Citations"),
+                self.tr("This project has no locations yet. Add one when creating a project or wait for a location editor."),
+            )
+            return
+        if n_src == 0:
+            QMessageBox.information(
+                self,
+                self.tr("Citations"),
+                self.tr("No enabled built-in citation sources in the database."),
+            )
+            return
+        total = int(n_loc) * int(n_src)
+        msg = (
+            self.tr(
+                "About to queue %1 checks (%2 locations × %3 built-in sources). "
+                "HTTP requests will be sent to third-party sites—only continue if that is allowed for you and you accept rate-limit responsibility. Proceed?"
+            )
+            .replace("%1", str(total))
+            .replace("%2", str(n_loc))
+            .replace("%3", str(n_src))
+        )
+        if (
+            QMessageBox.question(
+                self,
+                self.tr("Citation matrix"),
+                msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        s = self._session()
+        try:
+            job = Job(
+                project_id=self._current_project_id,
+                type="citation",
+                status="queued",
+                progress_pct=0.0,
+                payload_json={},
+            )
+            s.add(job)
+            s.commit()
+            jid = job.id
+        finally:
+            s.close()
+        self._append_log(self.tr("Queued citation job %1").replace("%1", str(jid)))
+        self._citation_active_job_id = jid
+        self._cit_run_btn.setEnabled(False)
+        self._cit_progress.setRange(0, 100)
+        self._cit_progress.setValue(0)
+        self._cit_progress.setVisible(True)
+        self._cit_status.setText(self.tr("Queued…"))
+        self._cit_status.setVisible(True)
+        self._pool.start(CitationMatrixWorker(jid, self._engine, self._bus))
+        self._refresh_job_table()
+
     def _export_builtin_citations_csv(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self, self.tr("Export built-in citation sources"), "", self.tr("CSV (*.csv)")
@@ -861,7 +971,11 @@ class MainWindow(QMainWindow):
         p = Path(path)
         s = self._session()
         try:
-            n = export_builtin_citation_sources_csv(s, p)
+            try:
+                n = export_builtin_citation_sources_csv(s, p)
+            except OSError as e:
+                self._warn_export_write_failed(p, e)
+                return
         finally:
             s.close()
         QMessageBox.information(
@@ -992,10 +1106,25 @@ class MainWindow(QMainWindow):
         l.addWidget(
             QLabel(
                 self.tr(
-                    "Matrix fetch jobs are not wired yet; this page lists data you already have and supports exporting built-in source definitions."
+                    "Run a citation matrix job to record one row per (location × built-in source): "
+                    "HTTP GET for templates that do not require Playwright; Playwright-only sources are recorded as skipped."
                 )
             )
         )
+        mrow = QHBoxLayout()
+        self._cit_run_btn = QPushButton(self.tr("Run citation matrix (HTTP)…"))
+        self._cit_run_btn.clicked.connect(self._run_citation_matrix)
+        mrow.addWidget(self._cit_run_btn)
+        self._cit_progress = QProgressBar()
+        self._cit_progress.setRange(0, 100)
+        self._cit_progress.setTextVisible(True)
+        self._cit_progress.setVisible(False)
+        mrow.addWidget(self._cit_progress, 1)
+        l.addLayout(mrow)
+        self._cit_status = QLabel("")
+        self._cit_status.setWordWrap(True)
+        self._cit_status.setVisible(False)
+        l.addWidget(self._cit_status)
         tabs = QTabWidget()
         src_tab = QWidget()
         sv = QVBoxLayout(src_tab)
@@ -1341,6 +1470,10 @@ class MainWindow(QMainWindow):
                 .all()
             )
             self._crawl_pages_table.setRowCount(len(pages))
+            url_norms = [p.url_norm for p in pages]
+            pages_by_id = {p.id: p.url_norm for p in pages}
+            in_map = inbound_internal_counts(s, self._current_project_id, url_norms)
+            out_map = outbound_internal_counts(s, self._current_project_id, pages_by_id)
             for r, p in enumerate(pages):
                 self._crawl_pages_table.setItem(r, 0, QTableWidgetItem(str(p.id)))
                 self._crawl_pages_table.setItem(r, 1, QTableWidgetItem(p.url_norm))
@@ -1348,8 +1481,15 @@ class MainWindow(QMainWindow):
                 self._crawl_pages_table.setItem(
                     r, 3, QTableWidgetItem("" if p.status_code is None else str(p.status_code))
                 )
+                self._crawl_pages_table.setItem(
+                    r, 4, QTableWidgetItem("" if p.crawl_depth is None else str(p.crawl_depth))
+                )
+                nin = in_map.get(p.url_norm, 0)
+                nout = out_map.get(p.id, 0)
+                self._crawl_pages_table.setItem(r, 5, QTableWidgetItem(str(nin)))
+                self._crawl_pages_table.setItem(r, 6, QTableWidgetItem(str(nout)))
                 ts = p.last_crawled_at.isoformat() if p.last_crawled_at else ""
-                self._crawl_pages_table.setItem(r, 4, QTableWidgetItem(ts))
+                self._crawl_pages_table.setItem(r, 7, QTableWidgetItem(ts))
         finally:
             s.close()
 
@@ -1363,7 +1503,7 @@ class MainWindow(QMainWindow):
         try:
             rows = (
                 s.execute(
-                    select(SeoAudit, Page.url_norm)
+                    select(SeoAudit, Page)
                     .join(Page, SeoAudit.page_id == Page.id)
                     .where(Page.project_id == self._current_project_id)
                     .order_by(SeoAudit.audited_at.desc())
@@ -1372,17 +1512,43 @@ class MainWindow(QMainWindow):
                 .all()
             )
             self._audit_results_table.setRowCount(len(rows))
-            for r, (audit, url_norm) in enumerate(rows):
+            url_norms_a = [page.url_norm for _audit, page in rows]
+            pages_by_id_a = {page.id: page.url_norm for _audit, page in rows}
+            in_map_a = inbound_internal_counts(s, self._current_project_id, url_norms_a)
+            out_map_a = outbound_internal_counts(s, self._current_project_id, pages_by_id_a)
+            for r, (audit, page) in enumerate(rows):
                 issues = audit.issues_json or []
                 n_issues = len(issues) if isinstance(issues, list) else 0
                 self._audit_results_table.setItem(r, 0, QTableWidgetItem(str(audit.id)))
                 self._audit_results_table.setItem(r, 1, QTableWidgetItem(str(audit.page_id)))
-                self._audit_results_table.setItem(r, 2, QTableWidgetItem(url_norm))
+                self._audit_results_table.setItem(r, 2, QTableWidgetItem(page.url_norm))
+                self._audit_results_table.setItem(
+                    r, 3, QTableWidgetItem("" if page.crawl_depth is None else str(page.crawl_depth))
+                )
+                nin = in_map_a.get(page.url_norm, 0)
+                nout = out_map_a.get(page.id, 0)
+                self._audit_results_table.setItem(r, 4, QTableWidgetItem(str(nin)))
+                self._audit_results_table.setItem(r, 5, QTableWidgetItem(str(nout)))
                 sc = "" if audit.overall_score is None else f"{audit.overall_score:.1f}"
-                self._audit_results_table.setItem(r, 3, QTableWidgetItem(sc))
-                self._audit_results_table.setItem(r, 4, QTableWidgetItem(str(n_issues)))
+                self._audit_results_table.setItem(r, 6, QTableWidgetItem(sc))
+                self._audit_results_table.setItem(r, 7, QTableWidgetItem(str(n_issues)))
         finally:
             s.close()
+
+    def _warn_export_write_failed(self, path: Path, exc: Exception) -> None:
+        QMessageBox.warning(
+            self,
+            self.tr("Export failed"),
+            self.tr(
+                "Could not write to:\n%1\n\n"
+                "Common causes: the file is open in another program (for example Excel), "
+                "OneDrive or sync software is locking the file, or the folder is read-only. "
+                "Close the file, wait for sync to finish, or choose a different path.\n\n"
+                "Details: %2"
+            )
+            .replace("%1", str(path))
+            .replace("%2", str(exc)),
+        )
 
     def _export_pages_csv_dialog(self) -> None:
         if not self._current_project_id:
@@ -1390,9 +1556,14 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, self.tr("Export pages"), "", "*.csv")
         if not path:
             return
+        dest = Path(path)
         s = self._session()
         try:
-            n = export_pages_csv(s, self._current_project_id, Path(path))
+            try:
+                n = export_pages_csv(s, self._current_project_id, dest)
+            except OSError as e:
+                self._warn_export_write_failed(dest, e)
+                return
         finally:
             s.close()
         QMessageBox.information(self, self.tr("Export"), self.tr("Exported %1 rows.").replace("%1", str(n)))
@@ -1403,9 +1574,14 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, self.tr("Export links"), "", "*.csv")
         if not path:
             return
+        dest = Path(path)
         s = self._session()
         try:
-            n = export_page_links_csv(s, self._current_project_id, Path(path))
+            try:
+                n = export_page_links_csv(s, self._current_project_id, dest)
+            except OSError as e:
+                self._warn_export_write_failed(dest, e)
+                return
         finally:
             s.close()
         QMessageBox.information(self, self.tr("Export"), self.tr("Exported %1 rows.").replace("%1", str(n)))
@@ -1416,9 +1592,14 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, self.tr("Export audits"), "", "*.csv")
         if not path:
             return
+        dest = Path(path)
         s = self._session()
         try:
-            n = export_seo_audits_csv(s, self._current_project_id, Path(path))
+            try:
+                n = export_seo_audits_csv(s, self._current_project_id, dest)
+            except OSError as e:
+                self._warn_export_write_failed(dest, e)
+                return
         finally:
             s.close()
         QMessageBox.information(self, self.tr("Export"), self.tr("Exported %1 rows.").replace("%1", str(n)))
@@ -1429,9 +1610,14 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, self.tr("Export audits"), "", "*.json")
         if not path:
             return
+        dest = Path(path)
         s = self._session()
         try:
-            n = export_seo_audits_json(s, self._current_project_id, Path(path))
+            try:
+                n = export_seo_audits_json(s, self._current_project_id, dest)
+            except OSError as e:
+                self._warn_export_write_failed(dest, e)
+                return
         finally:
             s.close()
         QMessageBox.information(self, self.tr("Export"), self.tr("Exported %1 records.").replace("%1", str(n)))
@@ -1470,6 +1656,12 @@ class MainWindow(QMainWindow):
             self._serp_progress.setValue(int(min(100, max(0, pct))))
             self._serp_status.setVisible(True)
             self._serp_status.setText(msg)
+        if job_id == self._citation_active_job_id:
+            self._cit_progress.setVisible(True)
+            self._cit_progress.setRange(0, 100)
+            self._cit_progress.setValue(int(min(100, max(0, pct))))
+            self._cit_status.setVisible(True)
+            self._cit_status.setText(msg)
 
     def _on_job_finished(self, job_id: int, summary: dict) -> None:
         self._append_log(f"Job {job_id} finished: {json.dumps(summary)}")
@@ -1500,6 +1692,32 @@ class MainWindow(QMainWindow):
             self._refresh_serp_snapshots_table()
             self._rebuild_rank_chart()
             QMessageBox.information(self, self.tr("SERP"), self.tr("Snapshot stored (best-effort)."))
+        if job_id == self._citation_active_job_id and summary.get("type") == "citation":
+            self._citation_active_job_id = None
+            if getattr(self, "_cit_run_btn", None):
+                self._cit_run_btn.setEnabled(True)
+            self._cit_progress.setVisible(False)
+            self._cit_status.setVisible(False)
+            self._refresh_citations_checks_table()
+            self._refresh_dashboard_stats()
+            if summary.get("cancelled"):
+                QMessageBox.information(
+                    self,
+                    self.tr("Citations"),
+                    self.tr("Citation matrix cancelled."),
+                )
+            else:
+                ok = summary.get("http_ok", 0)
+                err = summary.get("http_err", 0)
+                sk = summary.get("skipped_playwright", 0)
+                QMessageBox.information(
+                    self,
+                    self.tr("Citations"),
+                    self.tr("Matrix finished: %1 OK HTTP, %2 errors, %3 skipped (Playwright).")
+                    .replace("%1", str(ok))
+                    .replace("%2", str(err))
+                    .replace("%3", str(sk)),
+                )
 
     def _on_job_failed(self, job_id: int, code: str, msg: str) -> None:
         self._append_log(f"Job {job_id} failed ({code}): {msg}")
@@ -1526,6 +1744,13 @@ class MainWindow(QMainWindow):
             self._serp_progress.setVisible(False)
             self._serp_status.setVisible(False)
             QMessageBox.warning(self, self.tr("SERP"), f"{code}: {msg}")
+        if job_id == self._citation_active_job_id:
+            self._citation_active_job_id = None
+            if getattr(self, "_cit_run_btn", None):
+                self._cit_run_btn.setEnabled(True)
+            self._cit_progress.setVisible(False)
+            self._cit_status.setVisible(False)
+            QMessageBox.warning(self, self.tr("Citations"), f"{code}: {msg}")
 
     def _on_task_progress(self, task_id: str, pct: float, msg: str) -> None:
         if task_id == "updates":

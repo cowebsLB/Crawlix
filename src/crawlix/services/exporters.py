@@ -24,7 +24,9 @@ def export_pages_csv(session: Session, project_id: int, path: Path) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["id", "url_norm", "url_final", "title", "status_code", "last_crawled_at"])
+        w.writerow(
+            ["id", "url_norm", "url_final", "title", "status_code", "crawl_depth", "last_crawled_at"]
+        )
         for p in rows:
             w.writerow(
                 [
@@ -33,6 +35,7 @@ def export_pages_csv(session: Session, project_id: int, path: Path) -> int:
                     p.url_final or "",
                     p.title or "",
                     p.status_code if p.status_code is not None else "",
+                    p.crawl_depth if p.crawl_depth is not None else "",
                     p.last_crawled_at.isoformat() if p.last_crawled_at else "",
                 ]
             )

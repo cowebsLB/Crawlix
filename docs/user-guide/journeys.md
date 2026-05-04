@@ -42,7 +42,7 @@ Each journey maps to **tests**, **docs**, and **release checklists**. Keep in sy
 
 | Journey | Where it lives |
 |---------|----------------|
-| **J8** | **Citations** page: **Built-in sources** tab lists global `citation_sources` rows (YAML → DB on first run and after each unlock via `seed_builtin_sources`); **Export built-in sources CSV**; **Locations (NAP)** tab lists `locations` for the current project; **Check history** tab lists `citation_checks` joined to location/source (newest first). Matrix fetch jobs and NAP-vs-page diff are not implemented yet. |
+| **J8** | **Citations** page: **Built-in sources** + CSV export; **Locations**; **Check history**. **Run citation matrix (HTTP)** queues job type `citation` — `CitationMatrixWorker` expands templates (`placeholders.expand_template`), runs HTTP checks (small bodies gzipped), skips `requires_playwright` rows, honors cancel. NAP-vs-page diff not implemented yet. |
 
 ## Doc chapters (suggested)
 

@@ -196,6 +196,7 @@ def run_crawl_job(
             page.content_type = resp.headers.get("content-type")
             page.last_crawled_at = now
             page.crawl_job_id = job_id
+        page.crawl_depth = item.depth
 
         body = resp.content or b""
         session.add(
@@ -238,6 +239,15 @@ def run_crawl_job(
                         )
                     )
                     continue
+                session.add(
+                    PageLink(
+                        from_page_id=page.id,
+                        to_url_norm=next_u,
+                        link_text=node.text()[:512] if node.text() else None,
+                        nofollow="nofollow" in (node.attributes.get("rel") or "").lower(),
+                        job_id=job_id,
+                    )
+                )
                 if next_u not in visited:
                     exists = (
                         session.query(CrawlQueueItem)

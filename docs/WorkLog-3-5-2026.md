@@ -38,10 +38,20 @@
 - **Tests:** `export_builtin_citation_sources_csv` covered in `tests/unit/test_exporters.py`.
 - **Docs:** [`docs/user-guide/journeys.md`](user-guide/journeys.md) — **J8 in the current app**; [`docs/changelog.md`](changelog.md); [`docs/architecture.md`](architecture.md) / [`docs/ui/overview.md`](ui/overview.md) aligned with citations export.
 
+## Iteration — citation matrix job (J8)
+
+- **`CitationMatrixWorker`** (`src/crawlix/workers/citation_worker.py`): `Job.type == "citation"`; Cartesian product of project **locations** × enabled **built-in** `citation_sources`; **`expand_template`**; **`httpx`** + **`GlobalOutboundLimiter`**; **`CitationCheck`** rows (OK / error / skipped); **Nominatim** ~1.1s spacing; gzip bodies ≤120KB; **cancel** between cells.
+- **UI:** **Run citation matrix (HTTP)…** on Citations page, progress + status, confirmation dialog with counts; **`JobBus`** wired like SERP; completion summary (OK / errors / Playwright skipped).
+- **Tests:** `tests/unit/test_citation_placeholders.py` for template expansion.
+
+### Bundled same commit (crawl / audit)
+
+- **`pages.crawl_depth`**, Alembic migration, BFS + Crawl UI max depth, CSV export column, **`robots_check`**, **`site_audit`** inbound/outbound counts on Crawl and Audit tables, audit worker robots batching; tests `test_site_audit.py`.
+
 ## Next steps
 
 - Per-journey chapters under `docs/user-guide/` (see [`journeys.md`](user-guide/journeys.md) “Doc chapters”) as flows stabilize.
 - Screenshots in [`docs/ui/overview.md`](ui/overview.md) when the visual design is frozen.
 - Optional root `CHANGELOG.md` mirroring `docs/changelog.md` if you want GitHub Releases to pick it up automatically.
 - **J7 depth:** write real **`rankings`** rows from SERP/domain match rules (or manual rank capture) and plot position over time instead of the organic-count proxy.
-- **J8 depth:** citation matrix **job** type + worker to populate `citation_checks`; optional NAP diff vs page crawl.
+- **J8 depth:** optional **NAP diff** vs crawled page; **Playwright** path for `requires_playwright` sources when policy allows.
