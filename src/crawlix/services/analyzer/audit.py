@@ -39,7 +39,16 @@ def score_from_issues(issues: list[dict]) -> tuple[float, dict[str, float]]:
         cat = str(issue.get("category") or "general")
         penalties[cat] = penalties.get(cat, 0.0) + _severity_penalty(str(issue.get("severity", "low")))
     if not penalties:
-        return 100.0, {"metadata": 100.0, "content": 100.0, "indexability": 100.0, "canonical": 100.0, "links": 100.0, "url_structure": 100.0, "duplicates": 100.0}
+        perfect = {
+            "metadata": 100.0,
+            "content": 100.0,
+            "indexability": 100.0,
+            "canonical": 100.0,
+            "links": 100.0,
+            "url_structure": 100.0,
+            "duplicates": 100.0,
+        }
+        return 100.0, perfect
     for cat, pen in penalties.items():
         cats[cat] = max(0.0, 100.0 - pen)
     overall = sum(cats.values()) / len(cats)

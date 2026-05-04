@@ -21,7 +21,11 @@ def test_missing_canonical() -> None:
 
 
 def test_meta_noindex() -> None:
-    html = '<html><head><title>t</title><meta name="robots" content="noindex,follow"/></head><body><h1>x</h1></body></html>'
+    html = (
+        '<html><head><title>t</title>'
+        '<meta name="robots" content="noindex,follow"/>'
+        "</head><body><h1>x</h1></body></html>"
+    )
     _s, issues, _ = audit_html(html, "https://a.test/")
     assert any(i["id"] == "meta_noindex" for i in issues)
 

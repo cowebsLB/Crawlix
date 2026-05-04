@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file. Format follows 
 
 ### Fixed
 
+- **CI (Ruff):** Wrapped long lines in **`audit.py`**, **`site_audit.py`**, **`main_window.py`**, **`audit_worker.py`**, **`test_audit.py`**; corrected **`main_window`** import order (`analyzer` before **`citations`**) so `ruff check src tests` passes on Actions.
 - **CI (Ubuntu):** Removed unused **`pytest-qt`** from dev dependencies so `pytest` does not auto-load the Qt plugin (which required **`libEGL.so.1`** on headless runners). Current tests are non-GUI only.
 
 ### Added

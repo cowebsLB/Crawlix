@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from urllib.robotparser import RobotFileParser
 
 import httpx
-from urllib.robotparser import RobotFileParser
 from PyQt6.QtCore import QRunnable
 from selectolax.parser import HTMLParser
 from sqlalchemy.orm import sessionmaker
@@ -13,7 +13,11 @@ from sqlalchemy.orm import sessionmaker
 from crawlix.db.models import CrawledData, Job, Page, SeoAudit
 from crawlix.services.analyzer.audit import audit_html, content_fingerprint, score_from_issues
 from crawlix.services.analyzer.robots_check import url_allowed_by_robots
-from crawlix.services.analyzer.site_audit import cross_page_issues_for_batch, inbound_internal_counts, outbound_internal_counts
+from crawlix.services.analyzer.site_audit import (
+    cross_page_issues_for_batch,
+    inbound_internal_counts,
+    outbound_internal_counts,
+)
 from crawlix.services.net.global_limiter import GlobalOutboundLimiter
 from crawlix.utils.gzip_util import gunzip_bytes
 from crawlix.workers.job_bus import JobBus

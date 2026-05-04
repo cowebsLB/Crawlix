@@ -103,7 +103,12 @@ def cross_page_issues_for_batch(
                     "severity": "medium",
                     "category": "duplicates",
                     "message": "Same title text is used on multiple pages",
-                    "evidence": {"title": tkey[:200], "other_urls": [u for u in others if u != by_id[pid]["url_norm"]][:8]},
+                    "evidence": {
+                        "title": tkey[:200],
+                        "other_urls": [
+                            u for u in others if u != by_id[pid]["url_norm"]
+                        ][:8],
+                    },
                 }
             )
 
@@ -119,7 +124,12 @@ def cross_page_issues_for_batch(
                     "severity": "medium",
                     "category": "duplicates",
                     "message": "Several normalized URLs resolve to the same final URL",
-                    "evidence": {"final_url": ufn, "alternate_paths": [u for u in urls if u != by_id[pid]["url_norm"]][:8]},
+                    "evidence": {
+                        "final_url": ufn,
+                        "alternate_paths": [
+                            u for u in urls if u != by_id[pid]["url_norm"]
+                        ][:8],
+                    },
                 }
             )
 

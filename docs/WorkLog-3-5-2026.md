@@ -48,6 +48,10 @@
 
 - **`pages.crawl_depth`**, Alembic migration, BFS + Crawl UI max depth, CSV export column, **`robots_check`**, **`site_audit`** inbound/outbound counts on Crawl and Audit tables, audit worker robots batching; tests `test_site_audit.py`.
 
+## Iteration — CI (Ruff) green
+
+- **GitHub Actions:** Latest **`CI`** runs on `main` failed the **Ruff** step (E501 line length, I001 import order). Fixed by wrapping long strings / dicts, splitting **`site_audit`** import in **`audit_worker`**, **`ruff check --fix`** on **`audit_worker`**, and **`analyzer` → `citations`** import order in **`main_window`**.
+
 ## Next steps
 
 - Per-journey chapters under `docs/user-guide/` (see [`journeys.md`](user-guide/journeys.md) “Doc chapters”) as flows stabilize.

@@ -54,8 +54,8 @@ from crawlix.db.models import (
 )
 from crawlix.db.session import make_engine
 from crawlix.db.settings_store import get_value, set_value
-from crawlix.services.citations.seed import seed_builtin_sources
 from crawlix.services.analyzer.site_audit import inbound_internal_counts, outbound_internal_counts
+from crawlix.services.citations.seed import seed_builtin_sources
 from crawlix.services.exporters import (
     export_builtin_citation_sources_csv,
     export_page_links_csv,
@@ -906,7 +906,10 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 self.tr("Citations"),
-                self.tr("This project has no locations yet. Add one when creating a project or wait for a location editor."),
+                self.tr(
+                    "This project has no locations yet. "
+                    "Add one when creating a project or wait for a location editor."
+                ),
             )
             return
         if n_src == 0:
@@ -920,7 +923,8 @@ class MainWindow(QMainWindow):
         msg = (
             self.tr(
                 "About to queue %1 checks (%2 locations × %3 built-in sources). "
-                "HTTP requests will be sent to third-party sites—only continue if that is allowed for you and you accept rate-limit responsibility. Proceed?"
+                "HTTP requests will be sent to third-party sites—only continue if "
+                "that is allowed for you and you accept rate-limit responsibility. Proceed?"
             )
             .replace("%1", str(total))
             .replace("%2", str(n_loc))
@@ -1107,7 +1111,8 @@ class MainWindow(QMainWindow):
             QLabel(
                 self.tr(
                     "Run a citation matrix job to record one row per (location × built-in source): "
-                    "HTTP GET for templates that do not require Playwright; Playwright-only sources are recorded as skipped."
+                    "HTTP GET for templates that do not require Playwright; "
+                    "Playwright-only sources are recorded as skipped."
                 )
             )
         )
@@ -1158,7 +1163,8 @@ class MainWindow(QMainWindow):
         lv.addWidget(
             QLabel(
                 self.tr(
-                    "Locations belong to the current project (optional NAP at project creation in J3; dedicated editor later)."
+                    "Locations belong to the current project "
+                    "(optional NAP at project creation in J3; dedicated editor later)."
                 )
             )
         )
@@ -1230,7 +1236,8 @@ class MainWindow(QMainWindow):
                     "Planned checklist direction:\n"
                     "• NAP consistency across on-site and major listings (manual or API-backed).\n"
                     "• GBP profile completeness (hours, categories, services) — link to official tools.\n"
-                    "• Local pack / map visibility only where SERP captures or third-party data allow defensible reads.\n"
+                    "• Local pack / map visibility only where SERP captures or third-party data "
+                    "allow defensible reads.\n"
                     "• Review and Q&A hygiene — policy-first guidance.\n\n"
                     "See docs/local-pack-roadmap.md for product constraints."
                 )
