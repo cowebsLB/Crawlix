@@ -9,6 +9,8 @@ from typing import Any
 
 import httpx
 
+from crawlix.services.net.ssrf import httpx_event_hooks_ssrf
+
 
 @dataclass
 class ProxyEntry:
@@ -54,6 +56,7 @@ class ProxyManager:
                 mounts=mounts,
                 timeout=httpx.Timeout(30.0, connect=10.0),
                 follow_redirects=True,
+                event_hooks=httpx_event_hooks_ssrf(allow_private=False),
             )
             if proxy and proxy.username:
                 # Basic proxy auth often in URL; httpx accepts proxy_url with creds

@@ -10,6 +10,7 @@ from PyQt6.QtCore import QRunnable
 from sqlalchemy.orm import sessionmaker
 
 from crawlix.db.models import Job
+from crawlix.services.net.ssrf import httpx_event_hooks_ssrf
 from crawlix.services.scraper.serp_service import fetch_serp_placeholder
 from crawlix.workers.job_bus import JobBus
 
@@ -27,7 +28,12 @@ class SerpWorker(QRunnable):
     def run(self) -> None:
         Session = sessionmaker(bind=self.engine, expire_on_commit=False)
         session = Session()
-        client = httpx.Client(follow_redirects=True, verify=True, timeout=60.0)
+        client = httpx.Client(
+            follow_redirects=True,
+            verify=True,
+            timeout=60.0,
+            event_hooks=httpx_event_hooks_ssrf(allow_private=False),
+        )
         try:
             job = session.get(Job, self.job_id)
             if not job or not job.payload_json:

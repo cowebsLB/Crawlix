@@ -33,6 +33,7 @@ This file mirrors the **Delivery phasing (milestones)** section of the product p
 
 ## Parallel tracks (non-blocking)
 
+- **Full UI redesign** — presentation and workflow only; see **[docs/ui/full-ui-redesign-backlog.md](ui/full-ui-redesign-backlog.md)** (orthogonal to phase epics; ship incrementally behind the same releases).
 - **SECURITY.md**, **CONTRIBUTING.md**, **docs/user-guide/** — start Phase 1; tighten each release.
 - **i18n / RTL** — `tr()` from Phase 1; RTL smoke by Phase 3.
 - **SQLCipher spike** — complete before large crawl HTML at scale (Phase 2); if slipped, cap crawl size in dev until encryption lands.

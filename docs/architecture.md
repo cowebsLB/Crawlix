@@ -59,3 +59,7 @@ Progress: **`CrawlWorker`** passes **`on_progress`** into **`run_crawl_job`** so
 - Added ui/controllers_serp.py to isolate SERP snapshot row metadata composition and organic count normalization.
 
 - Added ui/controllers_citations.py to isolate citation check row metadata shaping and clipping rules.
+
+## Next implementation priorities
+
+Engineering-led refactors and risks (MainWindow extraction order, SSRF DNS hardening, internal-link aggregation semantics, action-hub evolution): **[next-refactors-and-risks.md](next-refactors-and-risks.md)**.

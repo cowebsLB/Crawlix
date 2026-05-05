@@ -19,6 +19,7 @@ from crawlix.services.analyzer.site_audit import (
     outbound_internal_counts,
 )
 from crawlix.services.net.global_limiter import GlobalOutboundLimiter
+from crawlix.services.net.ssrf import httpx_event_hooks_ssrf
 from crawlix.utils.gzip_util import gunzip_bytes
 from crawlix.workers.job_bus import JobBus
 
@@ -55,7 +56,11 @@ class AuditWorker(QRunnable):
     def run(self) -> None:
         Session = sessionmaker(bind=self.engine, expire_on_commit=False)
         session = Session()
-        client = httpx.Client(follow_redirects=True, verify=True)
+        client = httpx.Client(
+            follow_redirects=True,
+            verify=True,
+            event_hooks=httpx_event_hooks_ssrf(allow_private=False),
+        )
         limiter = GlobalOutboundLimiter()
         robots_cache: dict[str, RobotFileParser] = {}
         try:
@@ -83,8 +88,14 @@ class AuditWorker(QRunnable):
             project_id = pages[0].project_id
             pages_by_id = {p.id: p.url_norm for p in pages}
             url_norms = [p.url_norm for p in pages]
-            inbound_map = inbound_internal_counts(session, project_id, url_norms)
-            outbound_map = outbound_internal_counts(session, project_id, pages_by_id)
+            crawl_jids = {p.crawl_job_id for p in pages if p.crawl_job_id is not None}
+            link_crawl_id = next(iter(crawl_jids)) if len(crawl_jids) == 1 else None
+            inbound_map = inbound_internal_counts(
+                session, project_id, url_norms, crawl_job_id=link_crawl_id
+            )
+            outbound_map = outbound_internal_counts(
+                session, project_id, pages_by_id, crawl_job_id=link_crawl_id
+            )
 
             batch_rows: list[dict[str, object]] = []
             page_html: dict[int, str] = {}

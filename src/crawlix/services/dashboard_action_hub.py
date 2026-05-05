@@ -15,6 +15,11 @@ class NextActionItem:
     label: str
     reason: str
     target: str
+    severity: str | None = None
+    priority: str | None = None
+    entity_type: str | None = None
+    entity_id: int | None = None
+    suggested_filter: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +77,9 @@ def build_dashboard_action_hub(session: Session, project_id: int) -> DashboardAc
                 label=f"Fix critical issue on page {page_id}",
                 reason=f"{summary} · {url_norm[:72]}",
                 target=f"audit:page:{page_id}",
+                priority="now",
+                entity_type="page",
+                entity_id=page_id,
             )
         )
     if not next_actions:
@@ -81,6 +89,9 @@ def build_dashboard_action_hub(session: Session, project_id: int) -> DashboardAc
                     label=f"Address SEO issue on page {page_id}",
                     reason=f"{summary} · {url_norm[:72]}",
                     target=f"audit:page:{page_id}",
+                    priority="soon",
+                    entity_type="page",
+                    entity_id=page_id,
                 )
             )
 
@@ -92,6 +103,7 @@ def build_dashboard_action_hub(session: Session, project_id: int) -> DashboardAc
                     label="Monitor active jobs",
                     reason=f"{len(running)} queued/running job(s)",
                     target="jobs",
+                    entity_type="jobs",
                 )
             )
         else:
@@ -100,6 +112,8 @@ def build_dashboard_action_hub(session: Session, project_id: int) -> DashboardAc
                     label="Run crawl on seed URLs",
                     reason="No urgent issues detected from recent audits",
                     target="crawl:start",
+                    entity_type="crawl",
+                    suggested_filter={"apply_saved_crawl_view": True},
                 )
             )
 

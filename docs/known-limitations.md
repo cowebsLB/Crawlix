@@ -35,4 +35,5 @@ This document lists **intentional MVP gaps** and **deferred** items so expectati
 
 ## Architecture debt (acceptable for MVP)
 
-- Some **session / query usage** still lives in `MainWindow` for coordination; presentation and row-meta shaping increasingly live in **`ui/controllers_*`** modules and **`inspector_*` helpers** ([architecture.md](architecture.md)). Prefer thin presenters + facades as new surfaces are added.
+- Some **session / query usage** still lives in `MainWindow` for coordination; presentation and row-meta shaping increasingly live in **`ui/controllers_*`** modules and **`inspector_*` helpers** ([architecture.md](architecture.md)). Prefer thin presenters + facades as new surfaces are added. **Next split targets** (bootstrap, shell, project context, page factories, job dock) are outlined in [next-refactors-and-risks.md](next-refactors-and-risks.md).
+- **Internal link counts** default to the **latest completed crawl job** (`PageLink.job_id`). Pass **`crawl_job_id=…`** to `inbound_internal_counts` / `outbound_internal_counts` for a specific crawl. **`allow_private_ssrf`** only affects network fetch policy, not link math.

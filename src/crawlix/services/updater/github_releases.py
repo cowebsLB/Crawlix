@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from crawlix.config import GITHUB_REPO_SLUG
+from crawlix.services.net.ssrf import httpx_event_hooks_ssrf
 
 
 def fetch_latest_release(*, token: str | None = None) -> dict[str, Any]:
@@ -16,7 +17,10 @@ def fetch_latest_release(*, token: str | None = None) -> dict[str, Any]:
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "Crawlix-Updater"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    with httpx.Client(timeout=30.0) as client:
+    with httpx.Client(
+        timeout=30.0,
+        event_hooks=httpx_event_hooks_ssrf(allow_private=False),
+    ) as client:
         r = client.get(url, headers=headers)
         r.raise_for_status()
         return r.json()

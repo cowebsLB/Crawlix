@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from crawlix.db.models import CitationCheck, CitationSource, Job, Location
 from crawlix.services.citations.placeholders import LocationFields, expand_template
 from crawlix.services.net.global_limiter import GlobalOutboundLimiter
+from crawlix.services.net.ssrf import httpx_event_hooks_ssrf
 from crawlix.utils.gzip_util import gzip_bytes
 from crawlix.workers.job_bus import JobBus
 
@@ -44,7 +45,12 @@ class CitationMatrixWorker(QRunnable):
     def run(self) -> None:
         Session = sessionmaker(bind=self.engine, expire_on_commit=False)
         session = Session()
-        client = httpx.Client(follow_redirects=True, verify=True, timeout=30.0)
+        client = httpx.Client(
+            follow_redirects=True,
+            verify=True,
+            timeout=30.0,
+            event_hooks=httpx_event_hooks_ssrf(allow_private=False),
+        )
         limiter = GlobalOutboundLimiter()
         try:
             job = session.get(Job, self.job_id)

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from crawlix.config import OLLAMA_DEFAULT_URL
 from crawlix.db.models import AiCache
+from crawlix.services.net.ssrf import httpx_event_hooks_ssrf
 
 
 def _hash_prompt(model: str, prompt: str) -> str:
@@ -43,7 +44,10 @@ def generate(
 
     url = base_url.rstrip("/") + "/api/generate"
     payload = {"model": model, "prompt": prompt, "stream": False}
-    with httpx.Client(timeout=timeout_s) as client:
+    with httpx.Client(
+        timeout=timeout_s,
+        event_hooks=httpx_event_hooks_ssrf(allow_private=True),
+    ) as client:
         r = client.post(url, json=payload)
         r.raise_for_status()
         data: dict[str, Any] = r.json()

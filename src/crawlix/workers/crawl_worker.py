@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from crawlix.db.models import Job
 from crawlix.services.crawler.bfs import run_crawl_job
 from crawlix.services.net.global_limiter import GlobalOutboundLimiter
+from crawlix.services.net.ssrf import httpx_event_hooks_ssrf
 from crawlix.workers.job_bus import JobBus
 
 if TYPE_CHECKING:
@@ -36,10 +37,16 @@ class CrawlWorker(QRunnable):
     def run(self) -> None:
         Session = sessionmaker(bind=self.engine, expire_on_commit=False)
         session = Session()
-        client = httpx.Client(follow_redirects=True, verify=True)
         limiter = GlobalOutboundLimiter()
+        client: httpx.Client | None = None
         try:
             job = session.get(Job, self.job_id)
+            allow_private = bool((job.payload_json or {}).get("allow_private_ssrf", False)) if job else False
+            client = httpx.Client(
+                follow_redirects=True,
+                verify=True,
+                event_hooks=httpx_event_hooks_ssrf(allow_private=allow_private),
+            )
             if job:
                 job.status = "running"
                 job.started_at = job.started_at or datetime.now(UTC)
@@ -63,6 +70,7 @@ class CrawlWorker(QRunnable):
                 client=client,
                 limiter=limiter,
                 cancel_check=cancel_check,
+                allow_private_ssrf=allow_private,
                 on_progress=on_progress,
             )
             self.bus.finished.emit(self.job_id, summary)
@@ -70,4 +78,5 @@ class CrawlWorker(QRunnable):
             self.bus.failed.emit(self.job_id, "crawl_failed", str(e))
         finally:
             session.close()
-            client.close()
+            if client is not None:
+                client.close()

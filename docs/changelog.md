@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file. Format follows 
 
 ### Added
 
+- **Engineering backlog doc:** [next-refactors-and-risks.md](next-refactors-and-risks.md) — MainWindow strangulation plan, SSRF DNS gap, internal-link aggregation semantics, richer `NextActionItem` direction; linked from [INDEX.md](../INDEX.md), [architecture.md](architecture.md), [known-limitations.md](known-limitations.md).
 - **Crawl snapshots:** Tables **`crawl_snapshots`** / **`crawl_snapshot_pages`** (Alembic **`d4f8a2c1b0e3`**); BFS persists a snapshot after a completed crawl; services **`crawl_overview`**, **`crawl_snapshots`** (diff + formatting) support Crawl/Dashboard insights. Tests: `tests/unit/test_crawl_overview.py`, `tests/unit/test_crawl_snapshots.py`.
 - **Keyword targeting & templates:** **`projects.seo_context_json`** (Alembic **`e5a1c2d3b4f0`**) stores **`site_type`**, **`primary_country_code`**, **`brand_name`**, **`primary_topic`** (+ reserved **`language`**). **Keywords** tab — save targeting, generate phrase suggestions from site-type packs (merge with first **Location** + project defaults), add checked rows as **`keywords`** with **`tags_json`** marking template source. Service: **`crawlix.services.keywords.templates`**. Tests: **`tests/unit/test_keyword_templates.py`**. Docs: [keywords-targeting-and-templates.md](keywords-targeting-and-templates.md).
 - **Citations (J8):** **Citations** page — built-in sources (YAML → DB), **locations (NAP)**, **check history**; **Export built-in sources CSV**; **Run citation matrix** (`Job.type == citation`, **`CitationMatrixWorker`**). Unlock runs **`seed_builtin_sources`** for older DBs.
@@ -18,6 +19,11 @@ All notable changes to this project are documented in this file. Format follows 
 
 ### Changed
 
+- **UI foundation:** **`design_tokens.py`** centralizes dark/light semantic colors; **`app_dark.qss`** / **`app_light.qss`** use `%%token%%` placeholders filled by **`load_stylesheet`**. New **`crawlix.ui.shell`** package (**`TopCommandStrip`**, **`NavRailColumn`**, **`PageHost`**, **`JobCenter`**) — project row moved to a real top strip; page stack and job dock use named hosts for QSS. See [design-tokens.md](ui/design-tokens.md), [full-ui-redesign-backlog.md](ui/full-ui-redesign-backlog.md).
+- **Internal link counts:** `inbound_internal_counts` / `outbound_internal_counts` filter by **`PageLink.job_id`** — default **latest completed crawl**; optional **`crawl_job_id=`**. Audit worker selects a single shared **`page.crawl_job_id`** when unambiguous. Crawl UI notes which crawl job drives link stats.
+- **SSRF:** Hostnames are resolved (**A/AAAA**); blocked if any resolved IP is private/local (unless **`allow_private`**); short-lived DNS cache; **`clear_ssrf_dns_cache()`** for tests. **`httpx_event_hooks_ssrf`** on app clients validates **every** request URL (including **redirect** hops); re-exported from **`crawlix.services.net`**.
+- **Dashboard actions:** **`decode_dashboard_list_item`** / **`dashboard_action_runner`**; **`resolve_dashboard_action`** adds **`crawl:start`** → **`focus_crawl_seeds`**; **`suggested_filter`** JSON on list items ( **`apply_saved_crawl_view`**, partial crawl **`SavedView`** keys); **`query_audit_results_rows`** pins audit rows when outside the **200**-row window.
+- **`NextActionItem`:** Optional **`severity`**, **`priority`**, **`entity_type`**, **`entity_id`**, **`suggested_filter`** — hub fills priority/entity fields for audit and fallback actions; list items store entity metadata for routing.
 - **Shell UX:** Stacked pages wrapped in **`QScrollArea`** (**`wrap_page_content`**); **collapsible sidebar** ( **`QSettings`** **`ui/nav_collapsed`** ); **togglable job dock** (**View → Job dock**, **`ui/job_dock_hidden`**, **`ui/job_dock_last_height`**).
 - **Crawl layout:** Horizontal splitter defaults (**`ui/crawl_lr_split`**), wider **Page details** pane.
 - **Inputs:** Application **`wheel_guard`** blocks mouse-wheel from changing **`QSpinBox`** / **`QComboBox`** values while scrolling.
@@ -26,6 +32,7 @@ All notable changes to this project are documented in this file. Format follows 
 
 ### Fixed
 
+- **Crawl BFS:** Removed stray **`max(len(pending), 1)`** expression in **`run_crawl_job`** (dead code).
 - **CI (Ruff):** Line length / import order on audited modules so **`ruff check src tests`** passes on Actions.
 - **CI (Ubuntu):** Removed unused **`pytest-qt`** from dev deps so headless runners do not load the Qt GUI plugin.
 - **`httpx.Client` lifecycle:** synchronous clients use **`close()`**, not **`aclose()`** (crawl, audit, proxy manager).

@@ -49,6 +49,7 @@ def run_crawl_job(
     if not job or not job.payload_json:
         return {"error": "missing job"}
     payload = job.payload_json
+    allow_private_ssrf = bool(payload.get("allow_private_ssrf", allow_private_ssrf))
     seeds: list[str] = payload.get("seed_urls") or []
     max_depth: int = int(payload.get("max_depth", 2))
     respect_robots: bool = bool(payload.get("respect_robots", True))
@@ -103,8 +104,6 @@ def run_crawl_job(
             .filter(CrawlQueueItem.job_id == job_id, CrawlQueueItem.state == "pending")
             .all()
         )
-
-    max(len(pending), 1)
 
     while pending:
         if cancel_check():

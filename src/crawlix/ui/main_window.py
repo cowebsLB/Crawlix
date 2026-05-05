@@ -12,6 +12,7 @@ from matplotlib.figure import Figure
 from PyQt6.QtCore import QSettings, QSize, Qt, QThreadPool, QTimer, QUrl
 from PyQt6.QtGui import QAction, QCloseEvent, QDesktopServices, QFont, QKeySequence, QPalette, QShowEvent
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -56,12 +57,15 @@ from crawlix.db.models import (
     Page,
     Project,
     Ranking,
-    SeoAudit,
     SerpResult,
 )
 from crawlix.db.session import make_engine
 from crawlix.db.settings_store import get_value, set_value
-from crawlix.services.analyzer.site_audit import inbound_internal_counts, outbound_internal_counts
+from crawlix.services.analyzer.site_audit import (
+    inbound_internal_counts,
+    latest_completed_crawl_job_id,
+    outbound_internal_counts,
+)
 from crawlix.services.citations.seed import seed_builtin_sources
 from crawlix.services.crawler.crawl_overview import (
     effective_final_url,
@@ -90,8 +94,12 @@ from crawlix.services.keywords.templates import (
 from crawlix.services.updater import github_releases
 from crawlix.ui import onboarding
 from crawlix.ui.components import ActionListPanel, InspectorPanel
-from crawlix.ui.controllers_actions import resolve_dashboard_action
-from crawlix.ui.controllers_audit import build_audit_row_meta, issue_count
+from crawlix.ui.controllers_actions import DashboardActionRoute
+from crawlix.ui.controllers_audit import (
+    build_audit_row_meta,
+    issue_count,
+    query_audit_results_rows,
+)
 from crawlix.ui.controllers_citations import (
     build_citation_check_row_meta,
     clipped_error,
@@ -109,10 +117,12 @@ from crawlix.ui.controllers_inspector_secondary import (
     build_serp_inspector_text,
 )
 from crawlix.ui.controllers_serp import build_serp_row_meta, serp_organic_count
+from crawlix.ui.dashboard_action_runner import decode_dashboard_list_item, resolve_route_from_decoded
 from crawlix.ui.layout_helpers import wrap_page_content
 from crawlix.ui.page_sections import table_with_inspector_split
 from crawlix.ui.project_dialog import NewProjectDialog
 from crawlix.ui.saved_views import SavedView, SavedViewStore
+from crawlix.ui.shell import JobCenter, NavRailColumn, PageHost, TopCommandStrip
 from crawlix.ui.svg_icons import svg_icon_colored
 from crawlix.ui.theme import apply_application_theme, sync_theme_to_qsettings
 from crawlix.utils.slug import unique_project_slug
@@ -250,6 +260,8 @@ class MainWindow(QMainWindow):
         outer_layout = QVBoxLayout(outer)
         outer_layout.setContentsMargins(0, 0, 0, 0)
 
+        self._top_command_strip = TopCommandStrip()
+
         main_row = QWidget()
         m = QHBoxLayout(main_row)
         m.setContentsMargins(8, 8, 8, 0)
@@ -282,16 +294,7 @@ class MainWindow(QMainWindow):
         self._nav_toggle.clicked.connect(self._toggle_nav_collapsed)
         self._refresh_nav_toggle_icon()
 
-        self._nav_col = QWidget()
-        nv = QVBoxLayout(self._nav_col)
-        nv.setContentsMargins(0, 0, 0, 0)
-        nv.setSpacing(4)
-        nh = QHBoxLayout()
-        nh.setContentsMargins(0, 0, 0, 0)
-        nh.addStretch()
-        nh.addWidget(self._nav_toggle)
-        nv.addLayout(nh)
-        nv.addWidget(self._nav, 1)
+        self._nav_col = NavRailColumn(self._nav_toggle, self._nav)
         m.addWidget(self._nav_col)
         self._apply_nav_compact()
 
@@ -306,22 +309,19 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(wrap_page_content(self._page_reports()))
         self._stack.addWidget(wrap_page_content(self._page_settings()))
 
-        top = QHBoxLayout()
+        top = self._top_command_strip.layout()
+        assert top is not None
         top.addWidget(QLabel(self.tr("Project:")))
         self._project_combo = QComboBox()
         self._project_combo.currentIndexChanged.connect(self._on_project_changed)
         top.addWidget(self._project_combo, 1)
 
-        right = QVBoxLayout()
-        right.addLayout(top)
-        right.addWidget(self._stack, 1)
+        self._page_host = PageHost(self._stack)
+        m.addWidget(self._page_host, 1)
 
-        m.addLayout(right, 1)
-
-        self._dock_wrap = QWidget()
-        dw = QVBoxLayout(self._dock_wrap)
+        self._dock_wrap = JobCenter()
+        dw = self._dock_wrap.body_layout()
         dw.setContentsMargins(8, 4, 8, 8)
-        dw.setSpacing(4)
         dock_head = QWidget()
         dh = QHBoxLayout(dock_head)
         dh.setContentsMargins(0, 0, 0, 0)
@@ -356,6 +356,7 @@ class MainWindow(QMainWindow):
         self._main_vertical_split.addWidget(self._dock_wrap)
         self._main_vertical_split.setStretchFactor(0, 1)
         self._main_vertical_split.setStretchFactor(1, 0)
+        outer_layout.addWidget(self._top_command_strip)
         outer_layout.addWidget(self._main_vertical_split, 1)
 
         self.setCentralWidget(outer)
@@ -651,16 +652,93 @@ class MainWindow(QMainWindow):
         row = self._dash_actions.currentRow() if getattr(self, "_dash_actions", None) else -1
         if row < 0:
             return
-        it = self._dash_actions.item(row)
-        if not it:
+        decoded = decode_dashboard_list_item(self._dash_actions.item(row))
+        if decoded is None:
             return
-        target = str(it.data(Qt.ItemDataRole.UserRole) or "")
-        route = resolve_dashboard_action(target)
+        route = resolve_route_from_decoded(decoded)
         if route.show_jobs:
             self._set_job_dock_hidden(False)
             return
         if route.nav_row is not None:
             self._nav.setCurrentRow(route.nav_row)
+        sf = decoded.suggested_filter
+        QTimer.singleShot(
+            0,
+            lambda r=route, f=sf: self._dashboard_post_nav_actions(r, f),
+        )
+
+    def _dashboard_post_nav_actions(
+        self,
+        route: DashboardActionRoute,
+        suggested_filter: dict[str, object] | None,
+    ) -> None:
+        if route.focus_audit_page_id is not None:
+            self._focus_audit_row_for_page_id(int(route.focus_audit_page_id))
+            return
+        if route.focus_crawl_seeds:
+            if suggested_filter and suggested_filter.get("apply_saved_crawl_view"):
+                self._apply_crawl_saved_view()
+            elif suggested_filter:
+                self._apply_crawl_filter_partial(suggested_filter)
+            if getattr(self, "_crawl_seeds", None):
+                self._crawl_seeds.setFocus(Qt.FocusReason.OtherFocusReason)
+            return
+
+    def _apply_crawl_filter_partial(self, data: dict[str, object]) -> None:
+        if not getattr(self, "_crawl_search", None):
+            return
+        widgets = (
+            self._crawl_search,
+            self._crawl_http_filter,
+            self._crawl_depth_filter,
+            self._crawl_max_inbound,
+            self._crawl_min_outbound,
+            self._crawl_dup_only,
+        )
+        for w in widgets:
+            w.blockSignals(True)
+        try:
+            if "search" in data:
+                self._crawl_search.setText(str(data.get("search") or ""))
+            if "http_filter" in data:
+                idx = self._crawl_http_filter.findData(data.get("http_filter"))
+                if idx >= 0:
+                    self._crawl_http_filter.setCurrentIndex(idx)
+            if "depth_filter" in data:
+                idx2 = self._crawl_depth_filter.findData(data.get("depth_filter"))
+                if idx2 >= 0:
+                    self._crawl_depth_filter.setCurrentIndex(idx2)
+            if "max_inbound" in data:
+                self._crawl_max_inbound.setValue(int(data["max_inbound"]))
+            if "min_outbound" in data:
+                self._crawl_min_outbound.setValue(int(data["min_outbound"]))
+            if "dup_only" in data:
+                self._crawl_dup_only.setChecked(bool(data["dup_only"]))
+        finally:
+            for w in widgets:
+                w.blockSignals(False)
+        self._refresh_crawl_pages_table()
+
+    def _select_audit_row_for_page_id(self, page_id: int) -> bool:
+        tb = getattr(self, "_audit_results_table", None)
+        if tb is None:
+            return False
+        for r in range(tb.rowCount()):
+            it = tb.item(r, 1)
+            if it is not None and it.text() == str(page_id):
+                tb.selectRow(r)
+                cell = tb.item(r, 0)
+                if cell is not None:
+                    tb.scrollToItem(cell, QAbstractItemView.ScrollHint.PositionAtCenter)
+                self._on_audit_selection_changed()
+                return True
+        return False
+
+    def _focus_audit_row_for_page_id(self, page_id: int) -> None:
+        if self._select_audit_row_for_page_id(page_id):
+            return
+        self._refresh_audit_results_table(prioritize_page_id=page_id)
+        self._select_audit_row_for_page_id(page_id)
 
     def _page_crawl(self) -> QWidget:
         w = QWidget()
@@ -2470,6 +2548,15 @@ class MainWindow(QMainWindow):
                 for a in hub.next_actions:
                     it = QListWidgetItem(f"{a.label}\n{a.reason}")
                     it.setData(Qt.ItemDataRole.UserRole, a.target)
+                    it.setData(Qt.ItemDataRole.UserRole + 1, a.entity_id)
+                    it.setData(Qt.ItemDataRole.UserRole + 2, a.entity_type)
+                    if a.suggested_filter:
+                        it.setData(
+                            Qt.ItemDataRole.UserRole + 3,
+                            json.dumps(a.suggested_filter, ensure_ascii=True),
+                        )
+                    else:
+                        it.setData(Qt.ItemDataRole.UserRole + 3, None)
                     self._dash_actions.addItem(it)
                 self._dash_needs_attention.clear()
                 for line in hub.needs_attention:
@@ -2534,6 +2621,9 @@ class MainWindow(QMainWindow):
             in_all = inbound_internal_counts(s, self._current_project_id, url_norms_all)
             out_all = outbound_internal_counts(s, self._current_project_id, pages_by_id_all)
             insight_txt = format_internal_link_insights(pages_minimal, in_all, out_all)
+            _lj = latest_completed_crawl_job_id(s, self._current_project_id)
+            if _lj is not None:
+                insight_txt += f"\n\nInternal link counts use crawl job #{_lj} (latest completed crawl)."
             if int(stats["pages"]) > len(pages_minimal):
                 insight_txt += (
                     f"\n\nNote: link stats above use the first {len(pages_minimal)} pages by id "
@@ -2735,7 +2825,7 @@ class MainWindow(QMainWindow):
             return
         self._start_audit_pages(list(self._crawl_display_page_ids))
 
-    def _refresh_audit_results_table(self) -> None:
+    def _refresh_audit_results_table(self, *, prioritize_page_id: int | None = None) -> None:
         if not getattr(self, "_audit_results_table", None):
             return
         if not self._current_project_id:
@@ -2745,15 +2835,11 @@ class MainWindow(QMainWindow):
             return
         s = self._session()
         try:
-            rows = (
-                s.execute(
-                    select(SeoAudit, Page)
-                    .join(Page, SeoAudit.page_id == Page.id)
-                    .where(Page.project_id == self._current_project_id)
-                    .order_by(SeoAudit.audited_at.desc())
-                    .limit(200)
-                )
-                .all()
+            rows = query_audit_results_rows(
+                s,
+                self._current_project_id,
+                limit=200,
+                prioritize_page_id=prioritize_page_id,
             )
             self._audit_results_table.setRowCount(len(rows))
             self._audit_row_meta = []
