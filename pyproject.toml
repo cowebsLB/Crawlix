@@ -35,6 +35,9 @@ crawlix = "crawlix.main:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+crawlix = ["resources/icons/*.svg"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py311"
@@ -47,3 +50,5 @@ ignore = ["E741"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+# Must match the app (PyQt6). Otherwise pytest-qt may load PySide6 and mixed Qt bindings crash on Windows.
+qt_api = "pyqt6"

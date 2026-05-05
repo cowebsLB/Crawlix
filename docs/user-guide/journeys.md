@@ -35,7 +35,7 @@ Each journey maps to **tests**, **docs**, and **release checklists**. Keep in sy
 
 | Journey | Where it lives |
 |---------|----------------|
-| **J6** | **Keywords** tab: table of project keywords + refresh; **SERP snapshots** tab: keyword picker (`QComboBox`), run snapshot job, history table (fetched time, status, organic hit count). Storage unchanged: `serp_results` + gzip HTML via `fetch_serp_placeholder`. |
+| **J6** | **Keywords** tab: table of project keywords + refresh; **Project targeting (templates)** saves `projects.seo_context_json` (site type, country, brand, topic) and **Template keyword ideas** generates English phrase packs, deduped vs existing phrases, **Add checked to project**; **SERP snapshots** tab: keyword picker (`QComboBox`), run snapshot job, history table (fetched time, status, organic hit count). Storage: `keywords` (+ optional `tags_json`), `serp_results` + gzip HTML via `fetch_serp_placeholder`. |
 | **J7** | **Rank history** tab: **keyword picker** + Matplotlib chart of **`rankings.position`** (1 = best) over time vs **project `default_domain`** (subdomain match; DuckDuckGo `uddg=` unwrap). One **`Ranking`** row per SERP snapshot from **`fetch_serp_placeholder`**; gaps (`NaN`) when the domain is not in the parsed organic set. |
 
 ## J8 in the current app

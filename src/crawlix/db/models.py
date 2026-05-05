@@ -33,6 +33,7 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     default_domain: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    seo_context_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -245,6 +246,37 @@ class CrawlQueueItem(Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     job: Mapped[Job] = relationship(back_populates="crawl_queue_items")
+
+
+class CrawlSnapshot(Base):
+    """Point-in-time copy of project ``Page`` rows after a completed crawl (for diffing)."""
+
+    __tablename__ = "crawl_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    crawl_job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id", ondelete="SET NULL"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    page_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    pages: Mapped[list[CrawlSnapshotPage]] = relationship(
+        back_populates="snapshot", cascade="all, delete-orphan"
+    )
+
+
+class CrawlSnapshotPage(Base):
+    __tablename__ = "crawl_snapshot_pages"
+    __table_args__ = (UniqueConstraint("snapshot_id", "url_norm", name="uq_crawl_snapshot_pages_snapshot_url"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    snapshot_id: Mapped[int] = mapped_column(ForeignKey("crawl_snapshots.id", ondelete="CASCADE"), index=True)
+    url_norm: Mapped[str] = mapped_column(String(2048), nullable=False)
+    url_final: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    title: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    crawl_depth: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    snapshot: Mapped[CrawlSnapshot] = relationship(back_populates="pages")
 
 
 class CitationSource(Base):

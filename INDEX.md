@@ -16,7 +16,9 @@ Local-first **desktop** SEO workstation: crawl, audit, keywords/SERP, citations/
 - **Projects** with SQLite + **Alembic** migrations.
 - **Crawl** (polite BFS, robots, queue, pages + gzipped HTML).
 - **Audit** on crawled pages (scores + issues JSON).
-- **Keywords** and **SERP** snapshot (demo fetch path; methodology and legal notes in README).
+- **Keywords** and **SERP** snapshot (demo fetch path; methodology and legal notes in README); **project targeting** (`seo_context_json`) drives **template keyword suggestions** by site type and country.
+- **Crawl snapshots** (per-crawl graph snapshots + diff/overview helpers) and **dashboard action hub** (next steps, attention surfaces).
+- **Inspector / saved views** pattern on Dashboard, Crawl, Audit, SERP, and Citations (**persisted view state** where implemented).
 - **Citations** built-in YAML seed and placeholder docs.
 - **Local**, **Integrations**, **Reports** (sample export), **Settings** (theme, politeness copy).
 - **Job dock** (table + log), **inline progress** on long-running pages, **GitHub** update check.
@@ -76,6 +78,11 @@ python -m crawlix
 | [docs/ui/overview.md](docs/ui/overview.md) | Shell layout, navigation, job dock |
 | [docs/ui/glossary.md](docs/ui/glossary.md) | UI / i18n glossary |
 | [docs/ui/theme-and-progress.md](docs/ui/theme-and-progress.md) | Themes, contrast, Fusion, job and task progress |
+| [docs/ui/design-tokens.md](docs/ui/design-tokens.md) | Color / density / motion semantics (signature UI) |
+| [docs/ui/interaction-contracts.md](docs/ui/interaction-contracts.md) | Tables, inspector, actions — behavioral contracts |
+| [docs/ui/dashboard-action-model.md](docs/ui/dashboard-action-model.md) | Dashboard action hub routing and priorities |
+| [docs/ui/issue-taxonomy-and-priority.md](docs/ui/issue-taxonomy-and-priority.md) | Severity vs priority for insights |
+| [docs/ui/milestone-checklists.md](docs/ui/milestone-checklists.md) | Milestone acceptance checklists |
 
 ### Domain modules
 
@@ -83,6 +90,7 @@ python -m crawlix
 |----------|---------|
 | [docs/citation-placeholders.md](docs/citation-placeholders.md) | Citation YAML placeholder rules |
 | [docs/local-pack-roadmap.md](docs/local-pack-roadmap.md) | Local / GBP-oriented roadmap |
+| [docs/keywords-targeting-and-templates.md](docs/keywords-targeting-and-templates.md) | Project targeting JSON, site-type packs, Keywords tab workflow |
 | [docs/packaging.md](docs/packaging.md) | PyInstaller and cross-platform packaging notes |
 
 ### Operations

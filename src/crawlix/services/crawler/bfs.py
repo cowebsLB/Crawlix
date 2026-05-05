@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from crawlix.config import PRESETS, PolitenessDefaults
 from crawlix.db.models import CrawledData, CrawlQueueItem, Job, Page, PageLink
+from crawlix.services.crawler.crawl_snapshots import persist_after_completed_crawl
 from crawlix.services.net.backoff import sleep_for_retry
 from crawlix.services.net.global_limiter import GlobalOutboundLimiter
 from crawlix.services.net.ssrf import assert_url_safe_for_fetch
@@ -298,6 +299,11 @@ def run_crawl_job(
     job.finished_at = datetime.now(UTC)
     job.result_summary_json = {"fetched": fetched, "errors": errors[:20]}
     session.commit()
+    try:
+        persist_after_completed_crawl(session, project_id, job_id)
+        session.commit()
+    except Exception:
+        session.rollback()
     if on_progress:
         try:
             on_progress(100.0, f"Complete ({fetched} pages)")

@@ -5,6 +5,10 @@ End-user and acceptance-style documentation for Crawlix.
 | Document | Description |
 |----------|-------------|
 | [journeys.md](journeys.md) | **J1–J14** journey catalog — primary map from behavior to persistence and tests. |
+| [../keywords-targeting-and-templates.md](../keywords-targeting-and-templates.md) | **J6** — `seo_context_json`, site-type phrase packs, Keywords tab workflow. |
+| [../ui/design-tokens.md](../ui/design-tokens.md) | Visual personality and token semantics. |
+| [../ui/interaction-contracts.md](../ui/interaction-contracts.md) | Inspector, tables, and action interactions. |
+| [../ui/dashboard-action-model.md](../ui/dashboard-action-model.md) | Dashboard next-step and routing model. |
 
 ## Planned deep-dives
 
