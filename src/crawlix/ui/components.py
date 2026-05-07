@@ -3,7 +3,17 @@
 from __future__ import annotations
 
 from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QListWidget, QPushButton, QTextEdit, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QProgressBar,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class InspectorPanel(QWidget):
@@ -180,3 +190,30 @@ class MethodologyPanel(SectionCard):
             details.setWordWrap(True)
             details.setProperty("role", "metadata")
             self.body_layout.addWidget(details)
+
+
+class ProgressStrip(SectionCard):
+    """Shared progress + status surface for run flows."""
+
+    def __init__(self, title: str = "Progress") -> None:
+        super().__init__(title)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setVisible(False)
+        self.status_label = QLabel("")
+        self.status_label.setObjectName("ProgressStripStatus")
+        self.status_label.setProperty("state", "idle")
+        self.status_label.setWordWrap(True)
+        self.status_label.setVisible(False)
+        self.body_layout.addWidget(self.progress_bar)
+        self.body_layout.addWidget(self.status_label)
+
+    def set_state(self, text: str, *, state: str = "running", show: bool = True) -> None:
+        self.status_label.setText(text)
+        self.status_label.setProperty("state", state)
+        self.status_label.setVisible(show)
+        style = self.status_label.style()
+        if style is not None:
+            style.unpolish(self.status_label)
+            style.polish(self.status_label)

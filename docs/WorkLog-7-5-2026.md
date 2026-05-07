@@ -35,7 +35,95 @@
 - **Rank actions toolbar:** migrated Rank history refresh row to `DataGridToolbar` (`Refresh chart`) for action-row consistency with Crawl/Audit/Citations/Keywords/SERP.
 - **SectionCard wrapper sweep:** converted **Keywords**, **Rank history**, and Citations **Matrix job** wrappers from `QGroupBox` to `SectionCard` with existing controls/handlers unchanged.
 - **SectionCard wrapper sweep (continued):** converted Crawl **Run crawl**, Audit **Run**, and SERP **SERP snapshot** wrappers from `QGroupBox` to `SectionCard` while preserving all existing actions and behavior.
-- **SectionCard foundation:** added semantic `SectionCard` component (`QFrame#SectionCard`) and migrated Dashboard summary from `QGroupBox` to `SectionCard`. `ActionListPanel` now extends `SectionCard`, moving dashboard cards toward the new design grammar without behavior changes.
+- **Citations action consistency:** converted citations **Matrix job** action row to `DataGridToolbar` (run, refresh-all, save/load view + progress strip), keeping existing handlers and job flow.
+- **Citations source wrapper migration:** converted **Built-in sources** wrapper from `QGroupBox` to `SectionCard`.
+- **Job-center status semantics:** Jobs table **Status** column now renders `StatusPill` (queued/running warning, completed success, failed/cancelled danger) while retaining raw status text items for sort/data behavior.
+- **Crawl intelligence carding:** wrapped Crawl link-intelligence/diff tabs in a dedicated `SectionCard` to align analysis surfaces with the shared card grammar.
+- **Audit results carding:** wrapped Audit table+inspector split in `SectionCard("Audit results")` for consistent page hierarchy and spacing.
+- **Reports export toolbar:** switched Reports sample export action to `DataGridToolbar("Export actions")` while preserving existing export workflow and progress/status behavior.
+- **Page-module extraction start:** created `ui/pages/` package and extracted Dashboard page construction into `ui/pages/dashboard_page.py` (`build_dashboard_page` + typed refs dataclass), reducing `MainWindow` composition burden without behavior changes.
+- **Page-module extraction (Citations):** added `ui/pages/citations_page.py` (`build_citations_page` + refs dataclass) and rewired `MainWindow._page_citations()` to use it, preserving existing behavior while reducing `MainWindow` page-construction load.
+- **Page-module extraction (Keywords/SERP):** added `ui/pages/keywords_page.py` (`build_keywords_page` + refs dataclass) and rewired `MainWindow._page_keywords()` to consume it, preserving behavior while further reducing `MainWindow` UI-construction scope.
+- **Page-module extraction (Settings):** added `ui/pages/settings_page.py` (`build_settings_page` + refs dataclass) and rewired `MainWindow._page_settings()` to consume it with the same DB-backed values and save handlers.
+- **Page-module extraction (Local + Integrations):** added `ui/pages/local_page.py` and `ui/pages/integrations_page.py`, then rewired `MainWindow._page_local()` and `_page_integrations()` to use these builders with unchanged behavior.
+- **Page-module extraction (Reports):** added `ui/pages/reports_page.py` (`build_reports_page` + refs dataclass) and rewired `MainWindow._page_reports()` to consume it with the same export/progress behavior.
+- **Page-module extraction (Audit):** added `ui/pages/audit_page.py` (`build_audit_page` + refs dataclass), exported it from `ui/pages`, and rewired `MainWindow._page_audit()` to use the builder with unchanged audit run/filter/export behavior.
+- **Page-module extraction (Crawl):** added `ui/pages/crawl_page.py` (`build_crawl_page`) and rewired `MainWindow._page_crawl()` to delegate to it, preserving crawl UI behavior while removing the largest single page-construction block from `MainWindow`.
+- **Project orchestration cleanup:** added `ui/controllers_project.py` (`project_choices`) and rewired project reload flow to consume it.
+- **Refresh deduplication:** introduced `MainWindow._refresh_all_project_views()` and reused it from both project-change and project-reload paths to remove repeated refresh call blocks.
+- **Controller coverage:** added `tests/unit/test_project_controller.py` to verify project-choice ordering and return shape.
+- **Job-center controller extraction:** added `ui/controllers_jobs.py` for table-row shaping, status-variant mapping, and top jobs-badge text policy.
+- **MainWindow job refresh cleanup:** rewired `_refresh_job_table()` to use `controllers_jobs` helpers and removed inline status-variant branching.
+- **Job controller coverage:** added `tests/unit/test_jobs_controller.py` (status mapping, badge text, row-shaping behavior).
+- **Navigation controller extraction:** added `ui/controllers_nav.py` to own nav slugs, workflow groups, and localized nav labels.
+- **MainWindow nav cleanup:** rewired rail construction and route-to-page mapping to consume `controllers_nav` constants/helpers instead of inline nav config.
+- **Nav controller coverage:** added `tests/unit/test_nav_controller.py` to verify nav-group/slug consistency and localized label coverage.
+- **Shortcut controller extraction:** added `ui/controllers_shortcuts.py` to centralize keyboard shortcut specs and shortcuts-help copy.
+- **MainWindow keyboard UX baseline:** wired global shortcuts (`Ctrl+F`, `F5`, `Ctrl+J`, `Ctrl+L`, `Ctrl+E`, `Ctrl+R`, `Ctrl+,`, `F1`) to page-aware handlers and added a Help menu shortcuts dialog.
+- **Shortcut controller coverage:** added `tests/unit/test_shortcuts_controller.py` to verify unique shortcut keys and expected help-text entries.
+- **Dashboard post-route controller extraction:** added `ui/controllers_dashboard_routes.py` with a typed `DashboardPostNavPlan` builder to isolate follow-up behavior after dashboard action routing.
+- **MainWindow dashboard follow-up cleanup:** rewired `_dashboard_post_nav_actions()` to consume the route plan helper instead of inline conditional branching.
+- **Tab-aware `Ctrl+F` focus flow:** keyword and citations pages now focus tab-specific controls/tables based on the active sub-tab instead of a single static target.
+- **Dashboard route controller coverage:** added `tests/unit/test_dashboard_routes_controller.py` to verify audit-focus precedence and crawl saved-view/filter handling.
+- **Shortcut tab-routing helpers:** expanded `ui/controllers_shortcuts.py` with tab-aware action mapping for Keywords and Citations (`Ctrl+R`/`Ctrl+E` intent routing).
+- **Tab-aware keyboard actions (safe mode):** `MainWindow` now routes `Ctrl+R` by active sub-tab for Keywords/Citations and routes `Ctrl+E` for Citations Source tab export; non-exportable tabs show calm status feedback.
+- **Shortcuts help surface upgrade:** replaced shortcuts message-box with a lightweight dedicated dialog containing a readable, scrollable shortcuts reference.
+- **Shortcut mapping coverage expansion:** extended `tests/unit/test_shortcuts_controller.py` for keywords/citations tab-action mapping.
+- **Keywords export pass:** added CSV export actions for Keywords module tabs (keywords list, SERP snapshots, rank history) and wired them to existing export dialog flow.
+- **Tab-aware `Ctrl+E` upgrade (Keywords):** keyboard export now routes by active Keywords tab instead of falling back to a no-op warning.
+- **Export implementation hardening:** reused existing export-failure handling (`_warn_export_write_failed`) and added row-count completion feedback for new CSV exports.
+- **Keywords toolbar export parity:** added visible export actions directly in Keywords/SERP/Rank toolbars so mouse-first and keyboard-first workflows stay aligned.
+- **Page wiring update:** rewired `build_keywords_page(...)` callback contract and `MainWindow._page_keywords()` bindings to attach new export actions without changing underlying data flow.
+- **Keywords table context menu:** added right-click actions for refresh + keywords CSV export to mirror toolbar/shortcut behavior.
+- **SERP snapshots context menu:** added right-click actions for refresh, run snapshot, and snapshots CSV export so workflow actions are available directly on the grid.
+- **Context-menu wiring:** enabled custom context menu policy in `keywords_page` tables and connected callbacks into `MainWindow` handlers.
+- **Rank history context menu parity:** added right-click chart actions (`Refresh rank chart`, `Export rank CSV`) on the rank canvas to complete Keywords sub-tab context-action consistency.
+- **Rank callback wiring:** extended `build_keywords_page(...)` with rank-canvas context-menu callback and bound it from `MainWindow._page_keywords()`.
+- **Context-menu controller extraction:** added `ui/controllers_context_menu.py` with typed, reusable action definitions for crawl/keywords/SERP/rank context menus.
+- **MainWindow context-menu dedup:** replaced repeated per-menu `QAction` boilerplate with a shared `_show_context_menu(...)` helper that consumes controller-provided action definitions and callbacks.
+- **Context-menu controller coverage:** added `tests/unit/test_context_menu_controller.py` for action IDs/order and baseline menu contract checks.
+- **Toolbar controller extraction:** added `ui/controllers_toolbar.py` with typed action definitions for Keywords/SERP/Rank and Citations matrix toolbars.
+- **Keywords builder dedup:** rewired `keywords_page` toolbars to consume controller-provided action specs + callback maps, preserving button behavior while reducing inline action boilerplate.
+- **Citations builder dedup:** rewired citations matrix toolbar to consume controller-provided action specs + callback map, preserving existing run/refresh/save/load behavior.
+- **Toolbar controller coverage:** added `tests/unit/test_toolbar_controller.py` for action IDs/order and expected control presence.
+- **Toolbar controller expansion:** added Crawl, Audit, and Reports toolbar action specs in `ui/controllers_toolbar.py` to extend the same action-definition pattern beyond Keywords/Citations.
+- **Crawl/Audit/Reports builder dedup:** rewired page builders to consume controller-provided toolbar specs + callback maps, preserving existing action behavior while removing inline label/action duplication.
+- **Toolbar coverage expansion:** extended `tests/unit/test_toolbar_controller.py` with Crawl/Audit/Reports action-ID checks.
+- **Filter controller extraction:** added `ui/controllers_filters.py` with typed Crawl HTTP/depth filter option specs and shared Audit filter field labels.
+- **Crawl filter dedup:** rewired crawl HTTP/depth combo population in `crawl_page` to consume controller-provided filter options.
+- **Audit filter-label dedup:** rewired audit filter control labels in `audit_page` to consume controller-provided shared labels.
+- **Filter controller coverage:** added `tests/unit/test_filters_controller.py` (Crawl options order/values + Audit label stability).
+- **ProgressStrip component:** added reusable `ProgressStrip` in `ui/components.py` (shared progress bar + status label surface).
+- **Crawl progress migration:** switched Crawl run feedback to `ProgressStrip` while keeping compatibility aliases (`_crawl_progress`/`_crawl_status`) so existing orchestration code stays unchanged.
+- **Audit progress migration:** switched Audit run feedback to `ProgressStrip` with the same compatibility alias approach to avoid behavior regressions.
+- **SERP progress migration:** switched SERP run feedback to `ProgressStrip` in `keywords_page`, preserving existing references via compatibility wiring.
+- **Citations progress migration:** switched Citation matrix run feedback to `ProgressStrip` in `citations_page` with compatibility aliases for existing orchestration code.
+- **Reports progress migration:** switched report export feedback to `ProgressStrip` in `reports_page` while preserving indeterminate export behavior defaults.
+- **ProgressStrip semantic states:** added state API to `ProgressStrip` (`idle`, `running`, `success`, `failure`, `degraded`) with immediate style re-polish behavior.
+- **Progress status styling:** added QSS selectors for `QLabel#ProgressStripStatus[state="..."]` in both dark/light themes for consistent state coloring and borders.
+- **MainWindow state wiring:** added `_set_progress_status(...)` helper and wired running/success/failure state updates across crawl/audit/serp/citations job handlers and reports export task handlers.
+- **Degraded-state wiring (SERP):** added summary-to-state resolution in `MainWindow` by inspecting stored SERP snapshot status after job finish and mapping partial/captcha/blocked/timeout-style outcomes to `degraded`.
+- **Degraded-state wiring (Citations):** added summary-to-state resolution in `MainWindow` that marks citation matrix completion as `degraded` when HTTP errors or Playwright skips are present.
+- **Visibility policy tweak:** progress bars still hide on completion, while degraded status labels stay visible until next run so warnings remain discoverable.
+- **Progress-state controller extraction:** added `ui/controllers_progress_state.py` to centralize SERP/Citations progress-state mapping rules.
+- **MainWindow progress-state dedup:** rewired `_serp_finished_progress_state` and `_citation_finished_progress_state` to consume controller helpers instead of inline rule logic.
+- **Progress-state test coverage:** added `tests/unit/test_progress_state_controller.py` covering degraded/success/cancelled branches.
+- **Status-variant controller extraction:** added `ui/controllers_status.py` for SERP and Citations status→pill-variant mapping rules.
+- **MainWindow status mapping cleanup:** rewired SERP/Citations table pill rendering to consume `controllers_status` helpers and removed duplicate inline variant methods.
+- **Status controller coverage:** added `tests/unit/test_status_controller.py` for success/warning/danger/neutral mapping expectations.
+- **Shortcut routing controller expansion:** extended `controllers_shortcuts` with page-level focus/primary/export routing helpers (slug + tab-index aware) to reduce `MainWindow` branching.
+- **MainWindow shortcut cleanup:** rewired focus/export/primary shortcut handlers to consume controller-resolved action/target IDs via callback maps.
+- **Shortcut controller coverage expansion:** extended `tests/unit/test_shortcuts_controller.py` with page-level resolution checks.
+- **MainWindow shortcut map thinning:** extracted focus/export/primary shortcut callback maps into dedicated helper methods (`_shortcut_focus_targets`, `_shortcut_export_actions`, `_shortcut_primary_actions`) to reduce inline branching noise.
+- **Shortcut handler cleanup:** rewired focus/export/primary handlers to consume helper maps while preserving existing behavior and fallback messages.
+- **Shortcut refresh routing extraction:** added `refresh_action_id_for_page` in `controllers_shortcuts` and rewired `_refresh_current_page()` to use controller-resolved IDs + `_shortcut_refresh_actions()` map.
+- **Shortcut test expansion:** extended shortcut-controller tests with refresh-action resolution checks and unknown-page fallback coverage.
+- **Shortcut no-action policy extraction:** added `no_action_message_key(...)` in `controllers_shortcuts` to centralize no-op message routing by action kind + page context.
+- **MainWindow message dedup:** rewired refresh/export/primary no-op branches to a shared `_show_shortcut_no_action_message(...)` helper using controller-resolved message keys.
+- **Shortcut test expansion (messages):** added shortcut-controller tests for no-action message key routing.
+- **Citations toolbar-spec expansion:** added source/location/history toolbar action specs to `controllers_toolbar` to complete Citations toolbar coverage under controller-defined action IDs.
+- **Citations page dedup (continued):** rewired source/location/history toolbars in `citations_page` to consume controller-provided action specs + callback maps.
+- **Toolbar test expansion (Citations tabs):** extended `tests/unit/test_toolbar_controller.py` with source/location/history action-ID checks.
 
 ## Problems encountered
 
@@ -48,6 +136,26 @@
 
 ## Next steps
 
-- Introduce first shared components from backlog (`PageHeader`, `SectionCard`, `EmptyState`) and migrate one page at a time.
-- Start Crawl page visual grammar pass (`CommandBar` + `MetricStrip` + unified `FilterBar`) while preserving existing backend flow.
-- Add keyboard shortcut pass for the new shell chrome (`Ctrl+J`, `Ctrl+,`, `Ctrl+F`) and document help overlay baseline.
+- Extract the next thin-slice controller from `MainWindow` (keyboard shortcuts or page-route helpers) to keep shell orchestration modular.
+- Expand keyboard navigation beyond focus to page-tab aware `Ctrl+R`/`Ctrl+E` behavior where safe.
+- Add richer per-tab export targets where missing (e.g., SERP snapshots/rank data export actions) so `Ctrl+E` can be useful on more tabs.
+- Add context-menu parity for new Keywords exports (tab-level action buttons + right-click options where useful).
+- Add context-menu parity for new Keywords exports (tab-level action buttons + right-click options where useful).
+- Add rank-history context affordances (chart-level export affordance or contextual action trigger) to complete parity across all Keywords sub-tabs.
+- Continue moving repeated context-menu construction into reusable helpers as table/chart context actions expand.
+- Continue moving repeated command/toolbar action definitions into controllers to keep `MainWindow` focused on orchestration.
+- Continue moving remaining toolbar action definitions (Crawl/Audit/Reports) into controller specs for consistent page-builder patterns.
+- Keep applying controller-driven action specs to remaining filter/control bars where labels and action ordering are currently duplicated.
+- Continue applying controller-driven config to remaining static page copy/labels where we still duplicate literals across builders.
+- Expand `ProgressStrip` rollout to SERP, Citations, and Reports so job-feedback surfaces are fully consistent across modules.
+- Add semantic status variants (running/success/failure/degraded) to `ProgressStrip` styling and apply them from job/task event handlers.
+- Add explicit degraded-state signaling paths (where we already capture degraded/parsing-soft-failure conditions) to set `ProgressStrip` state to `degraded`.
+- Add focused unit coverage for progress-state resolution helpers (`_serp_finished_progress_state`, `_citation_finished_progress_state`) to lock behavior.
+- Apply the same extraction pattern to other small in-method policy rules in `MainWindow` that currently mix orchestration and mapping logic.
+- Continue extracting policy-only helpers from `MainWindow` where UI rendering consumes deterministic mapping rules.
+- Continue flattening repetitive callback maps in `MainWindow` into small helper methods as shortcut/control routing grows.
+- Continue carving `MainWindow` into small orchestration helpers where page-specific policy is already covered by controller modules.
+- Continue aligning all shortcut route decisions behind controller-resolved action IDs to keep keyboard behavior predictable and testable.
+- Keep collapsing repeated UI message policy into controller-backed keys to reduce branching drift in `MainWindow`.
+- Continue replacing remaining inline page-builder control definitions with controller-driven specs for ordering and label stability.
+- Continue replacing remaining inline page chrome with reusable shell/components primitives where behavior is already stable.

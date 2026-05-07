@@ -301,3 +301,34 @@ QLabel#StatusPill[status="danger"] {
   color: %%text_inverse%%;
   background-color: %%status_danger%%;
 }
+
+QLabel#ProgressStripStatus {
+  border: 1px solid %%border_default%%;
+  border-radius: %%radius_sm%%;
+  padding: 2px %%space_8%%;
+}
+
+QLabel#ProgressStripStatus[state="idle"] {
+  color: %%text_muted%%;
+  background-color: %%surface_raised%%;
+}
+
+QLabel#ProgressStripStatus[state="running"] {
+  color: %%text_inverse%%;
+  background-color: %%status_warning%%;
+}
+
+QLabel#ProgressStripStatus[state="success"] {
+  color: %%text_on_accent%%;
+  background-color: %%status_success%%;
+}
+
+QLabel#ProgressStripStatus[state="failure"] {
+  color: %%text_inverse%%;
+  background-color: %%status_danger%%;
+}
+
+QLabel#ProgressStripStatus[state="degraded"] {
+  color: %%text_inverse%%;
+  background-color: %%status_warning%%;
+}
