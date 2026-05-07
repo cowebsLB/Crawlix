@@ -275,3 +275,29 @@ QLabel[role="metadata"] {
   color: %%text_muted%%;
   font-size: 10pt;
 }
+
+QLabel#StatusPill {
+  border: 1px solid %%border_default%%;
+  border-radius: %%radius_pill%%;
+  padding: 2px %%space_8%%;
+}
+
+QLabel#StatusPill[status="neutral"] {
+  color: %%text_secondary%%;
+  background-color: %%surface_raised%%;
+}
+
+QLabel#StatusPill[status="success"] {
+  color: %%text_on_accent%%;
+  background-color: %%status_success%%;
+}
+
+QLabel#StatusPill[status="warning"] {
+  color: %%text_inverse%%;
+  background-color: %%status_warning%%;
+}
+
+QLabel#StatusPill[status="danger"] {
+  color: %%text_inverse%%;
+  background-color: %%status_danger%%;
+}

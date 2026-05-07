@@ -10,13 +10,14 @@ from pathlib import Path
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from PyQt6.QtCore import QSettings, QSize, Qt, QThreadPool, QTimer, QUrl
-from PyQt6.QtGui import QAction, QCloseEvent, QDesktopServices, QFont, QKeySequence, QPalette, QShowEvent
+from PyQt6.QtGui import QAction, QCloseEvent, QDesktopServices, QFont, QIcon, QKeySequence, QPalette, QShowEvent
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -93,7 +94,17 @@ from crawlix.services.keywords.templates import (
 )
 from crawlix.services.updater import github_releases
 from crawlix.ui import onboarding
-from crawlix.ui.components import ActionListPanel, InspectorPanel
+from crawlix.ui.components import (
+    ActionListPanel,
+    DataGridToolbar,
+    EmptyState,
+    FilterBar,
+    InspectorPanel,
+    MethodologyPanel,
+    PageHeader,
+    SectionCard,
+    StatusPill,
+)
 from crawlix.ui.controllers_actions import DashboardActionRoute
 from crawlix.ui.controllers_audit import (
     build_audit_row_meta,
@@ -143,6 +154,13 @@ _NAV_SLUGS: tuple[str, ...] = (
     "integrations",
     "reports",
     "settings",
+)
+_NAV_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Overview", ("dashboard",)),
+    ("Technical SEO", ("crawl", "audit")),
+    ("Discovery", ("keywords", "citations", "local")),
+    ("Output", ("reports",)),
+    ("System", ("integrations", "settings")),
 )
 
 
@@ -269,23 +287,36 @@ class MainWindow(QMainWindow):
         self._nav = QListWidget()
         self._nav.setSpacing(2)
         self._nav.currentRowChanged.connect(self._on_nav)
-        nav_labels = (
-            self.tr("Dashboard"),
-            self.tr("Crawl"),
-            self.tr("Audit"),
-            self.tr("Keywords / SERP"),
-            self.tr("Citations"),
-            self.tr("Local"),
-            self.tr("Integrations"),
-            self.tr("Reports"),
-            self.tr("Settings"),
-        )
-        for slug, label in zip(_NAV_SLUGS, nav_labels, strict=True):
-            item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, label)
-            item.setData(Qt.ItemDataRole.UserRole + 1, slug)
-            item.setToolTip(label)
-            self._nav.addItem(item)
+        self._nav_slug_to_row: dict[str, int] = {}
+        self._nav_row_to_page_index: dict[int, int] = {}
+        nav_labels = {
+            "dashboard": self.tr("Dashboard"),
+            "crawl": self.tr("Crawl"),
+            "audit": self.tr("Audit"),
+            "keywords": self.tr("Keywords / SERP"),
+            "citations": self.tr("Citations"),
+            "local": self.tr("Local"),
+            "integrations": self.tr("Integrations"),
+            "reports": self.tr("Reports"),
+            "settings": self.tr("Settings"),
+        }
+        for group_label, slugs in _NAV_GROUPS:
+            heading = QListWidgetItem(self.tr(group_label))
+            heading.setFlags(Qt.ItemFlag.NoItemFlags)
+            heading.setData(Qt.ItemDataRole.UserRole, self.tr(group_label))
+            heading.setData(Qt.ItemDataRole.UserRole + 1, "")
+            heading.setData(Qt.ItemDataRole.UserRole + 2, "heading")
+            self._nav.addItem(heading)
+            for slug in slugs:
+                label = nav_labels[slug]
+                item = QListWidgetItem(label)
+                item.setData(Qt.ItemDataRole.UserRole, label)
+                item.setData(Qt.ItemDataRole.UserRole + 1, slug)
+                item.setToolTip(label)
+                row = self._nav.count()
+                self._nav.addItem(item)
+                self._nav_slug_to_row[slug] = row
+                self._nav_row_to_page_index[row] = _NAV_SLUGS.index(slug)
 
         self._nav_toggle = QToolButton()
         self._nav_toggle.setAutoRaise(True)
@@ -311,10 +342,23 @@ class MainWindow(QMainWindow):
 
         top = self._top_command_strip.layout()
         assert top is not None
+        self._project_identity = QLabel(self.tr("No project"))
+        self._project_identity.setProperty("role", "metadata")
+        top.addWidget(self._project_identity)
         top.addWidget(QLabel(self.tr("Project:")))
         self._project_combo = QComboBox()
         self._project_combo.currentIndexChanged.connect(self._on_project_changed)
         top.addWidget(self._project_combo, 1)
+        self._global_search = QLineEdit()
+        self._global_search.setPlaceholderText(self.tr("Global search (coming soon)"))
+        self._global_search.setEnabled(False)
+        top.addWidget(self._global_search, 2)
+        self._top_jobs_badge = StatusPill(self.tr("Jobs: idle"), status="neutral")
+        top.addWidget(self._top_jobs_badge)
+        self._settings_shortcut_btn = QPushButton(self.tr("Settings"))
+        self._settings_shortcut_btn.setProperty("variant", "secondary")
+        self._settings_shortcut_btn.clicked.connect(lambda: self._set_current_nav_slug("settings"))
+        top.addWidget(self._settings_shortcut_btn)
 
         self._page_host = PageHost(self._stack)
         m.addWidget(self._page_host, 1)
@@ -360,7 +404,7 @@ class MainWindow(QMainWindow):
         outer_layout.addWidget(self._main_vertical_split, 1)
 
         self.setCentralWidget(outer)
-        self._nav.setCurrentRow(0)
+        self._set_current_nav_slug("dashboard")
         self._sync_job_dock_toggle_ui()
 
         sb = QStatusBar()
@@ -392,6 +436,8 @@ class MainWindow(QMainWindow):
             slug = it.data(Qt.ItemDataRole.UserRole + 1)
             if isinstance(slug, str) and slug:
                 it.setIcon(svg_icon_colored(slug, px, c))
+            else:
+                it.setIcon(QIcon())
 
     def _toggle_nav_collapsed(self) -> None:
         self._nav_collapsed = not self._nav_collapsed
@@ -410,6 +456,12 @@ class MainWindow(QMainWindow):
             it = self._nav.item(i)
             raw = it.data(Qt.ItemDataRole.UserRole)
             lab = str(raw) if raw is not None else it.text()
+            is_heading = it.data(Qt.ItemDataRole.UserRole + 2) == "heading"
+            if is_heading:
+                it.setText("" if collapsed else lab.upper())
+                it.setToolTip("")
+                it.setSizeHint(QSize(row_w, 14 if collapsed else 22))
+                continue
             it.setText("" if collapsed else lab)
             it.setToolTip(lab)
             it.setSizeHint(QSize(row_w, hint_h) if collapsed else QSize(200, hint_h))
@@ -558,11 +610,24 @@ class MainWindow(QMainWindow):
         self._refresh_nav_toggle_icon()
 
     def _on_nav(self, row: int) -> None:
-        self._stack.setCurrentIndex(max(0, row))
+        if row < 0:
+            return
+        page_idx = self._nav_row_to_page_index.get(row)
+        if page_idx is None:
+            return
+        self._stack.setCurrentIndex(page_idx)
+
+    def _set_current_nav_slug(self, slug: str) -> None:
+        row = self._nav_slug_to_row.get(slug)
+        if row is not None:
+            self._nav.setCurrentRow(row)
 
     def _on_project_changed(self) -> None:
         pid = self._project_combo.currentData()
         self._current_project_id = int(pid) if pid is not None else None
+        self._project_identity.setText(
+            self.tr("Current project: %1").replace("%1", self._project_combo.currentText() or self.tr("None"))
+        )
         self._refresh_dashboard_stats()
         self._refresh_crawl_pages_table()
         self._refresh_audit_results_table()
@@ -580,6 +645,11 @@ class MainWindow(QMainWindow):
             s.close()
         if self._project_combo.count():
             self._current_project_id = int(self._project_combo.itemData(0))
+            self._project_identity.setText(
+                self.tr("Current project: %1").replace("%1", self._project_combo.itemText(0))
+            )
+        else:
+            self._project_identity.setText(self.tr("Current project: none"))
         self._refresh_dashboard_stats()
         self._refresh_crawl_pages_table()
         self._refresh_audit_results_table()
@@ -589,28 +659,15 @@ class MainWindow(QMainWindow):
 
     def _page_header(self, title: str, subtitle: str | None = None) -> QWidget:
         """Plain-text page title (avoid HTML auto-rich-text that breaks contrast)."""
-        box = QWidget()
-        v = QVBoxLayout(box)
-        v.setContentsMargins(0, 0, 0, 6)
-        t = QLabel(title)
-        tf = QFont(t.font())
-        tf.setPointSize(15)
-        tf.setBold(True)
-        t.setFont(tf)
-        v.addWidget(t)
-        if subtitle:
-            s = QLabel(subtitle)
-            s.setWordWrap(True)
-            v.addWidget(s)
-        return box
+        return PageHeader(title, subtitle)
 
     def _page_dashboard(self) -> QWidget:
         w = QWidget()
         l = QVBoxLayout(w)
         l.setSpacing(10)
         l.addWidget(self._page_header(self.tr("Dashboard")))
-        sum_box = QGroupBox(self.tr("Project summary"))
-        sv = QVBoxLayout(sum_box)
+        summary_card = SectionCard(self.tr("Project summary"))
+        sv = summary_card.body_layout
         sv.addWidget(QLabel(self.tr("Action hub for this project. Prioritize next steps, not passive stats.")))
         self._dash_stats = QLabel("")
         self._dash_stats.setWordWrap(True)
@@ -621,7 +678,7 @@ class MainWindow(QMainWindow):
         dh.addWidget(db)
         dh.addStretch()
         sv.addLayout(dh)
-        l.addWidget(sum_box)
+        l.addWidget(summary_card)
 
         self._dash_actions_panel = ActionListPanel(
             self.tr("Next best actions"),
@@ -660,7 +717,8 @@ class MainWindow(QMainWindow):
             self._set_job_dock_hidden(False)
             return
         if route.nav_row is not None:
-            self._nav.setCurrentRow(route.nav_row)
+            if 0 <= route.nav_row < len(_NAV_SLUGS):
+                self._set_current_nav_slug(_NAV_SLUGS[route.nav_row])
         sf = decoded.suggested_filter
         QTimer.singleShot(
             0,
@@ -757,8 +815,8 @@ class MainWindow(QMainWindow):
             )
         )
 
-        run_box = QGroupBox(self.tr("Run crawl"))
-        run_row = QHBoxLayout(run_box)
+        run_box = SectionCard(self.tr("Run crawl"))
+        run_row = QHBoxLayout()
         run_row.setSpacing(10)
         run_row.addWidget(QLabel(self.tr("Seeds (comma-separated):")))
         self._crawl_seeds = QLineEdit("https://example.com/")
@@ -772,6 +830,7 @@ class MainWindow(QMainWindow):
         self._crawl_btn.setDefault(True)
         self._crawl_btn.clicked.connect(self._start_crawl)
         run_row.addWidget(self._crawl_btn)
+        run_box.body_layout.addLayout(run_row)
         cv.addWidget(run_box)
 
         self._crawl_progress = QProgressBar()
@@ -784,19 +843,12 @@ class MainWindow(QMainWindow):
         cv.addWidget(self._crawl_progress)
         cv.addWidget(self._crawl_status)
 
-        tool_row = QHBoxLayout()
-        tool_row.setSpacing(8)
-        rb = QPushButton(self.tr("Refresh table"))
-        rb.clicked.connect(self._refresh_crawl_pages_table)
-        tool_row.addWidget(rb)
-        ep = QPushButton(self.tr("Export pages CSV…"))
-        ep.clicked.connect(self._export_pages_csv_dialog)
-        tool_row.addWidget(ep)
-        el = QPushButton(self.tr("Export links CSV…"))
-        el.clicked.connect(self._export_links_csv_dialog)
-        tool_row.addWidget(el)
-        tool_row.addStretch()
-        cv.addLayout(tool_row)
+        crawl_toolbar = DataGridToolbar(self.tr("Table actions"))
+        crawl_toolbar.add_action(self.tr("Refresh table"), self._refresh_crawl_pages_table)
+        crawl_toolbar.add_action(self.tr("Export pages CSV…"), self._export_pages_csv_dialog, variant="secondary")
+        crawl_toolbar.add_action(self.tr("Export links CSV…"), self._export_links_csv_dialog, variant="secondary")
+        crawl_toolbar.add_stretch()
+        cv.addWidget(crawl_toolbar)
 
         stats_row = QWidget()
         sh = QHBoxLayout(stats_row)
@@ -840,8 +892,12 @@ class MainWindow(QMainWindow):
         intel_tabs.setMaximumHeight(200)
         cv.addWidget(intel_tabs)
 
-        filt_box = QGroupBox(self.tr("Table filters"))
-        fv = QVBoxLayout(filt_box)
+        self._crawl_filter_bar = FilterBar(
+            self.tr("Table filters"),
+            self.tr("Refine visible crawl rows by URL, status, depth, link counts, and duplicate grouping."),
+        )
+        self._crawl_filter_bar.set_summary(self.tr("Active filters: none"))
+        fv = self._crawl_filter_bar.body_layout
         fv.setSpacing(8)
         filt1 = QHBoxLayout()
         filt1.addWidget(QLabel(self.tr("Search URL/title:")))
@@ -900,7 +956,7 @@ class MainWindow(QMainWindow):
         filt2.addWidget(self._crawl_audit_filtered_btn)
         filt2.addStretch()
         fv.addLayout(filt2)
-        cv.addWidget(filt_box)
+        cv.addWidget(self._crawl_filter_bar)
 
         bottom = QWidget()
         bv = QVBoxLayout(bottom)
@@ -1108,8 +1164,8 @@ class MainWindow(QMainWindow):
                 self.tr("Scores, issues, crawl depth, and internal in/out link counts from the last crawl graph."),
             )
         )
-        run_box = QGroupBox(self.tr("Run"))
-        rv = QVBoxLayout(run_box)
+        run_box = SectionCard(self.tr("Run"))
+        rv = run_box.body_layout
         self._audit_btn = QPushButton(self.tr("Run audit on crawled pages"))
         self._audit_btn.clicked.connect(self._start_audit)
         rv.addWidget(self._audit_btn)
@@ -1123,19 +1179,40 @@ class MainWindow(QMainWindow):
         rv.addWidget(self._audit_progress)
         rv.addWidget(self._audit_status)
         l.addWidget(run_box)
-        ex_box = QGroupBox(self.tr("Exports"))
-        eh = QHBoxLayout(ex_box)
-        ar = QPushButton(self.tr("Refresh results"))
-        ar.clicked.connect(self._refresh_audit_results_table)
-        eh.addWidget(ar)
-        ea = QPushButton(self.tr("Export audits CSV…"))
-        ea.clicked.connect(self._export_audits_csv_dialog)
-        eh.addWidget(ea)
-        ej = QPushButton(self.tr("Export audits JSON…"))
-        ej.clicked.connect(self._export_audits_json_dialog)
-        eh.addWidget(ej)
-        eh.addStretch()
-        l.addWidget(ex_box)
+        audit_toolbar = DataGridToolbar(self.tr("Results actions"))
+        audit_toolbar.add_action(self.tr("Refresh results"), self._refresh_audit_results_table)
+        audit_toolbar.add_action(self.tr("Export audits CSV…"), self._export_audits_csv_dialog, variant="secondary")
+        audit_toolbar.add_action(self.tr("Export audits JSON…"), self._export_audits_json_dialog, variant="secondary")
+        audit_toolbar.add_stretch()
+        l.addWidget(audit_toolbar)
+        self._audit_filter_bar = FilterBar(
+            self.tr("Result filters"),
+            self.tr("Focus audit rows by URL match, score threshold, and issue volume."),
+        )
+        self._audit_filter_bar.set_summary(self.tr("Active filters: none"))
+        af = self._audit_filter_bar.body_layout
+        row = QHBoxLayout()
+        row.addWidget(QLabel(self.tr("Search URL:")))
+        self._audit_search = QLineEdit()
+        self._audit_search.setPlaceholderText(self.tr("Substring match…"))
+        self._audit_search.textChanged.connect(self._refresh_audit_results_table)
+        row.addWidget(self._audit_search, 1)
+        row.addWidget(QLabel(self.tr("Max score (≤):")))
+        self._audit_max_score = QDoubleSpinBox()
+        self._audit_max_score.setRange(-1.0, 100.0)
+        self._audit_max_score.setSingleStep(5.0)
+        self._audit_max_score.setValue(-1.0)
+        self._audit_max_score.setSpecialValueText(self.tr("Any"))
+        self._audit_max_score.valueChanged.connect(self._refresh_audit_results_table)
+        row.addWidget(self._audit_max_score)
+        row.addWidget(QLabel(self.tr("Min issues (≥):")))
+        self._audit_min_issues = QSpinBox()
+        self._audit_min_issues.setRange(0, 99)
+        self._audit_min_issues.setValue(0)
+        self._audit_min_issues.valueChanged.connect(self._refresh_audit_results_table)
+        row.addWidget(self._audit_min_issues)
+        af.addLayout(row)
+        l.addWidget(self._audit_filter_bar)
         self._audit_results_table = QTableWidget(0, 8)
         self._audit_results_table.setHorizontalHeaderLabels(
             [
@@ -1241,8 +1318,8 @@ class MainWindow(QMainWindow):
         kvl = QVBoxLayout(kw_tab)
         kvl.setSpacing(10)
 
-        tgt = QGroupBox(self.tr("Project targeting (templates)"))
-        tgf = QFormLayout(tgt)
+        tgt = SectionCard(self.tr("Project targeting (templates)"))
+        tgf = QFormLayout()
         self._kw_site_type = QComboBox()
         for site_key, lab in SITE_TYPE_CHOICES:
             self._kw_site_type.addItem(lab, site_key)
@@ -1262,47 +1339,44 @@ class MainWindow(QMainWindow):
         ts_row.addWidget(save_ctx)
         ts_row.addStretch()
         tgf.addRow("", ts_row)
+        tgt.body_layout.addLayout(tgf)
         kvl.addWidget(tgt)
 
-        tmpl = QGroupBox(self.tr("Template keyword ideas"))
-        tmv = QVBoxLayout(tmpl)
-        tmv.addWidget(
-            QLabel(
-                self.tr(
-                    "Uses site type, country, brand, topic, and your first location’s city (when set). "
-                    "Generate a shortlist, tick rows, then add them as tracked keywords."
-                )
-            )
+        tmpl = MethodologyPanel(
+            self.tr("Template keyword ideas"),
+            self.tr(
+                "Suggestions use site type, country, brand/topic context, and first location city when available."
+            ),
+            points=[
+                self.tr("Generate a shortlist, then tick rows you want to add as tracked keywords."),
+                self.tr("Treat generated phrases as analyst prompts; review intent and geography before storing."),
+            ],
         )
-        tbtn = QHBoxLayout()
-        gen_btn = QPushButton(self.tr("Generate suggestions"))
-        gen_btn.clicked.connect(self._generate_keyword_templates)
-        tbtn.addWidget(gen_btn)
-        add_tpl = QPushButton(self.tr("Add checked to project"))
-        add_tpl.clicked.connect(self._add_checked_template_keywords)
-        tbtn.addWidget(add_tpl)
-        tbtn.addStretch()
-        tmv.addLayout(tbtn)
+        tbtn = DataGridToolbar(self.tr("Suggestion actions"))
+        tbtn.add_action(self.tr("Generate suggestions"), self._generate_keyword_templates)
+        tbtn.add_action(
+            self.tr("Add checked to project"),
+            self._add_checked_template_keywords,
+            variant="secondary",
+        )
+        tbtn.add_stretch()
+        tmpl.body_layout.addWidget(tbtn)
         self._kw_template_list = QListWidget()
         self._kw_template_list.setMinimumHeight(140)
-        tmv.addWidget(self._kw_template_list)
+        tmpl.body_layout.addWidget(self._kw_template_list)
         kvl.addWidget(tmpl)
 
-        kw_box = QGroupBox(self.tr("Keywords"))
-        kw_inner = QVBoxLayout(kw_box)
+        kw_box = SectionCard(self.tr("Keywords"))
+        kw_inner = kw_box.body_layout
         self._kw_phrase = QLineEdit()
         kf = QFormLayout()
         kf.addRow(self.tr("New keyword:"), self._kw_phrase)
         kw_inner.addLayout(kf)
-        krow = QHBoxLayout()
-        kb = QPushButton(self.tr("Add keyword"))
-        kb.clicked.connect(self._add_keyword)
-        krow.addWidget(kb)
-        kr = QPushButton(self.tr("Refresh table"))
-        kr.clicked.connect(self._refresh_keywords_table)
-        krow.addWidget(kr)
-        krow.addStretch()
-        kw_inner.addLayout(krow)
+        kw_toolbar = DataGridToolbar(self.tr("Keyword actions"))
+        kw_toolbar.add_action(self.tr("Add keyword"), self._add_keyword)
+        kw_toolbar.add_action(self.tr("Refresh table"), self._refresh_keywords_table, variant="secondary")
+        kw_toolbar.add_stretch()
+        kw_inner.addWidget(kw_toolbar)
         kvl.addWidget(kw_box)
         self._kw_table = QTableWidget(0, 5)
         self._kw_table.setHorizontalHeaderLabels(
@@ -1315,25 +1389,28 @@ class MainWindow(QMainWindow):
         serp_tab = QWidget()
         svl = QVBoxLayout(serp_tab)
         svl.setSpacing(10)
-        serp_box = QGroupBox(self.tr("SERP snapshot"))
-        sg = QVBoxLayout(serp_box)
+        serp_box = SectionCard(self.tr("SERP snapshot"))
+        sg = serp_box.body_layout
         sk = QHBoxLayout()
         sk.addWidget(QLabel(self.tr("Keyword:")))
         self._serp_kw_combo = QComboBox()
         sk.addWidget(self._serp_kw_combo, 1)
-        skr = QPushButton(self.tr("Refresh lists"))
-        skr.clicked.connect(self._refresh_serp_tab_lists)
-        sk.addWidget(skr)
         sg.addLayout(sk)
-        self._serp_btn = QPushButton(self.tr("Run SERP snapshot (demo parser)"))
-        self._serp_btn.clicked.connect(self._run_serp)
-        sg.addWidget(self._serp_btn)
-        self._serp_save_view_btn = QPushButton(self.tr("Save view"))
-        self._serp_save_view_btn.clicked.connect(self._save_serp_saved_view)
-        sg.addWidget(self._serp_save_view_btn)
-        self._serp_load_view_btn = QPushButton(self.tr("Load view"))
-        self._serp_load_view_btn.clicked.connect(self._apply_serp_saved_view)
-        sg.addWidget(self._serp_load_view_btn)
+        serp_toolbar = DataGridToolbar(self.tr("SERP actions"))
+        serp_toolbar.add_action(self.tr("Refresh lists"), self._refresh_serp_tab_lists, variant="secondary")
+        self._serp_btn = serp_toolbar.add_action(self.tr("Run SERP snapshot"), self._run_serp)
+        self._serp_save_view_btn = serp_toolbar.add_action(
+            self.tr("Save view"),
+            self._save_serp_saved_view,
+            variant="secondary",
+        )
+        self._serp_load_view_btn = serp_toolbar.add_action(
+            self.tr("Load view"),
+            self._apply_serp_saved_view,
+            variant="secondary",
+        )
+        serp_toolbar.add_stretch()
+        sg.addWidget(serp_toolbar)
         self._serp_progress = QProgressBar()
         self._serp_progress.setRange(0, 100)
         self._serp_progress.setTextVisible(True)
@@ -1343,6 +1420,18 @@ class MainWindow(QMainWindow):
         self._serp_status.setVisible(False)
         sg.addWidget(self._serp_progress)
         sg.addWidget(self._serp_status)
+        sg.addWidget(
+            MethodologyPanel(
+                self.tr("Methodology"),
+                self.tr("SERP snapshots are best-effort captures and may differ from live browser results."),
+                points=[
+                    self.tr("Results can vary by datacenter IP, consent walls, localization, and anti-bot defenses."),
+                    self.tr(
+                        "Parser quality can degrade on layout changes; use inspector/status for degraded evidence."
+                    ),
+                ],
+            )
+        )
         svl.addWidget(serp_box)
         self._serp_snapshots_table = QTableWidget(0, 5)
         self._serp_snapshots_table.setHorizontalHeaderLabels(
@@ -1371,20 +1460,18 @@ class MainWindow(QMainWindow):
         rank_tab = QWidget()
         rvl = QVBoxLayout(rank_tab)
         rvl.setSpacing(10)
-        rank_box = QGroupBox(self.tr("Rank history"))
-        rg = QVBoxLayout(rank_box)
+        rank_box = SectionCard(self.tr("Rank history"))
+        rg = rank_box.body_layout
         rkw = QHBoxLayout()
         rkw.addWidget(QLabel(self.tr("Keyword:")))
         self._rank_kw_combo = QComboBox()
         self._rank_kw_combo.currentIndexChanged.connect(self._rebuild_rank_chart)
         rkw.addWidget(self._rank_kw_combo, 1)
         rg.addLayout(rkw)
-        rr = QHBoxLayout()
-        rrb = QPushButton(self.tr("Refresh chart"))
-        rrb.clicked.connect(self._rebuild_rank_chart)
-        rr.addWidget(rrb)
-        rr.addStretch()
-        rg.addLayout(rr)
+        rank_toolbar = DataGridToolbar(self.tr("Rank actions"))
+        rank_toolbar.add_action(self.tr("Refresh chart"), self._rebuild_rank_chart, variant="secondary")
+        rank_toolbar.add_stretch()
+        rg.addWidget(rank_toolbar)
         s_theme = self._session()
         try:
             chart_theme = get_value(s_theme, "ui_theme", "dark") or "dark"
@@ -1547,11 +1634,27 @@ class MainWindow(QMainWindow):
                 self._serp_snapshots_table.setItem(r, 1, QTableWidgetItem(phrase))
                 fts = sr.fetched_at.isoformat() if sr.fetched_at else ""
                 self._serp_snapshots_table.setItem(r, 2, QTableWidgetItem(fts))
-                self._serp_snapshots_table.setItem(r, 3, QTableWidgetItem(sr.status))
+                raw_status = (sr.status or "").strip()
+                self._serp_snapshots_table.setItem(r, 3, QTableWidgetItem(raw_status))
+                self._serp_snapshots_table.setCellWidget(
+                    r,
+                    3,
+                    StatusPill(raw_status or self.tr("unknown"), status=self._serp_status_variant(raw_status)),
+                )
                 self._serp_snapshots_table.setItem(r, 4, QTableWidgetItem(str(n_org)))
         finally:
             s.close()
         self._on_serp_selection_changed()
+
+    def _serp_status_variant(self, status: str) -> str:
+        s = status.lower()
+        if s in {"ok", "success", "completed"}:
+            return "success"
+        if s in {"degraded", "partial", "captcha", "empty"}:
+            return "warning"
+        if s in {"failed", "error", "timeout", "blocked"}:
+            return "danger"
+        return "neutral"
 
     def _on_serp_selection_changed(self) -> None:
         if not getattr(self, "_serp_inspector", None):
@@ -2087,7 +2190,13 @@ class MainWindow(QMainWindow):
                 self._cit_chk_table.setItem(r, 1, QTableWidgetItem(when))
                 self._cit_chk_table.setItem(r, 2, QTableWidgetItem(loc_label))
                 self._cit_chk_table.setItem(r, 3, QTableWidgetItem(src_name))
-                self._cit_chk_table.setItem(r, 4, QTableWidgetItem(chk.status or ""))
+                raw_status = (chk.status or "").strip()
+                self._cit_chk_table.setItem(r, 4, QTableWidgetItem(raw_status))
+                self._cit_chk_table.setCellWidget(
+                    r,
+                    4,
+                    StatusPill(raw_status or self.tr("unknown"), status=self._citation_status_variant(raw_status)),
+                )
                 self._cit_chk_table.setItem(
                     r, 5, QTableWidgetItem("" if chk.http_status is None else str(chk.http_status))
                 )
@@ -2096,6 +2205,16 @@ class MainWindow(QMainWindow):
         finally:
             s.close()
         self._on_citations_check_selection_changed()
+
+    def _citation_status_variant(self, status: str) -> str:
+        s = status.lower()
+        if s in {"ok", "success", "completed"}:
+            return "success"
+        if s in {"blocked", "failed", "error", "timeout"}:
+            return "danger"
+        if s in {"degraded", "queued", "running"}:
+            return "warning"
+        return "neutral"
 
     def _on_citations_check_selection_changed(self) -> None:
         if not getattr(self, "_cit_inspector", None):
@@ -2145,21 +2264,22 @@ class MainWindow(QMainWindow):
                 ),
             )
         )
-        how = QGroupBox(self.tr("How citation checks work"))
-        hv = QVBoxLayout(how)
-        hint = QLabel(
-            self.tr(
-                "Run a citation matrix job to record one row per (location × built-in source): "
-                "HTTP GET for templates that do not require Playwright; "
-                "Playwright-only sources are recorded as skipped."
+        l.addWidget(
+            MethodologyPanel(
+                self.tr("How citation checks work"),
+                self.tr(
+                    "Run a citation matrix job to record one row per (location × built-in source). "
+                    "HTTP templates run directly; Playwright-only templates are marked skipped."
+                ),
+                points=[
+                    self.tr("A failed row does not always mean listing absence; it can indicate blocking or timeout."),
+                    self.tr("Use final URL, HTTP, and error columns to decide whether re-checking is needed."),
+                ],
             )
         )
-        hint.setWordWrap(True)
-        hv.addWidget(hint)
-        l.addWidget(how)
 
-        run_box = QGroupBox(self.tr("Matrix job"))
-        rv = QVBoxLayout(run_box)
+        run_box = SectionCard(self.tr("Matrix job"))
+        rv = run_box.body_layout
         mrow = QHBoxLayout()
         self._cit_run_btn = QPushButton(self.tr("Run citation matrix (HTTP)…"))
         self._cit_run_btn.clicked.connect(self._run_citation_matrix)
@@ -2193,15 +2313,11 @@ class MainWindow(QMainWindow):
         sv.setSpacing(10)
         src_box = QGroupBox(self.tr("Built-in sources"))
         sbi = QVBoxLayout(src_box)
-        srow = QHBoxLayout()
-        sref = QPushButton(self.tr("Refresh list"))
-        sref.clicked.connect(self._refresh_citations_builtin_table)
-        srow.addWidget(sref)
-        sex = QPushButton(self.tr("Export CSV…"))
-        sex.clicked.connect(self._export_builtin_citations_csv)
-        srow.addWidget(sex)
-        srow.addStretch()
-        sbi.addLayout(srow)
+        src_toolbar = DataGridToolbar(self.tr("Source actions"))
+        src_toolbar.add_action(self.tr("Refresh list"), self._refresh_citations_builtin_table)
+        src_toolbar.add_action(self.tr("Export CSV…"), self._export_builtin_citations_csv, variant="secondary")
+        src_toolbar.add_stretch()
+        sbi.addWidget(src_toolbar)
         sv.addWidget(src_box)
         self._cit_src_table = QTableWidget(0, 7)
         self._cit_src_table.setHorizontalHeaderLabels(
@@ -2222,8 +2338,8 @@ class MainWindow(QMainWindow):
         loc_tab = QWidget()
         lv = QVBoxLayout(loc_tab)
         lv.setSpacing(10)
-        loc_box = QGroupBox(self.tr("Locations (NAP)"))
-        lbi = QVBoxLayout(loc_box)
+        loc_box = SectionCard(self.tr("Locations (NAP)"))
+        lbi = loc_box.body_layout
         lbi.addWidget(
             QLabel(
                 self.tr(
@@ -2232,9 +2348,10 @@ class MainWindow(QMainWindow):
                 )
             )
         )
-        lref = QPushButton(self.tr("Refresh locations"))
-        lref.clicked.connect(self._refresh_citations_locations_table)
-        lbi.addWidget(lref)
+        loc_toolbar = DataGridToolbar(self.tr("Location actions"))
+        loc_toolbar.add_action(self.tr("Refresh locations"), self._refresh_citations_locations_table)
+        loc_toolbar.add_stretch()
+        lbi.addWidget(loc_toolbar)
         lv.addWidget(loc_box)
         self._cit_loc_table = QTableWidget(0, 7)
         self._cit_loc_table.setHorizontalHeaderLabels(
@@ -2255,14 +2372,15 @@ class MainWindow(QMainWindow):
         chk_tab = QWidget()
         cv = QVBoxLayout(chk_tab)
         cv.setSpacing(10)
-        chk_box = QGroupBox(self.tr("Check history"))
-        cbi = QVBoxLayout(chk_box)
+        chk_box = SectionCard(self.tr("Check history"))
+        cbi = chk_box.body_layout
         cbi.addWidget(
             QLabel(self.tr("Latest rows for this project’s locations (newest first, up to 500)."))
         )
-        cref = QPushButton(self.tr("Refresh history"))
-        cref.clicked.connect(self._refresh_citations_checks_table)
-        cbi.addWidget(cref)
+        chk_toolbar = DataGridToolbar(self.tr("History actions"))
+        chk_toolbar.add_action(self.tr("Refresh history"), self._refresh_citations_checks_table)
+        chk_toolbar.add_stretch()
+        cbi.addWidget(chk_toolbar)
         cv.addWidget(chk_box)
         self._cit_chk_table = QTableWidget(0, 8)
         self._cit_chk_table.setHorizontalHeaderLabels(
@@ -2301,32 +2419,33 @@ class MainWindow(QMainWindow):
         l = QVBoxLayout(w)
         l.setSpacing(10)
         l.addWidget(self._page_header(self.tr("Local")))
-        scope = QGroupBox(self.tr("Scope (placeholder)"))
-        sv = QVBoxLayout(scope)
+        description = self.tr(
+            "GBP / local pack is a roadmap-preview module. Crawlix stays explicit about constraints: "
+            "official APIs and user-supplied evidence, no implied unsupported scraping.\n\n"
+            "Planned checklist direction:\n"
+            "• NAP consistency across on-site and major listings (manual or API-backed).\n"
+            "• GBP profile completeness (hours, categories, services) with official-tool links.\n"
+            "• Local pack / map visibility only where SERP captures or third-party data support defensible reads.\n"
+            "• Review and Q&A hygiene with policy-first guidance."
+        )
+        state = EmptyState(
+            self.tr("Local module preview"),
+            description,
+            primary_label=self.tr("Open local roadmap"),
+        )
         intro = QLabel(
             self.tr(
-                "GBP / local pack — placeholder UI. Honest scope: official APIs and user-supplied evidence; "
-                "no implied unsupported scraping."
+                "See docs/local-pack-roadmap.md for product constraints and planned delivery."
             )
         )
         intro.setWordWrap(True)
-        sv.addWidget(intro)
-        body = QTextEdit()
-        body.setReadOnly(True)
-        body.setPlainText(
-            self.tr(
-                "Planned checklist direction:\n"
-                "• NAP consistency across on-site and major listings (manual or API-backed).\n"
-                "• GBP profile completeness (hours, categories, services) — link to official tools.\n"
-                "• Local pack / map visibility only where SERP captures or third-party data "
-                "allow defensible reads.\n"
-                "• Review and Q&A hygiene — policy-first guidance.\n\n"
-                "See docs/local-pack-roadmap.md for product constraints."
-            )
+        intro.setProperty("role", "metadata")
+        state.body_layout.addWidget(intro)
+        assert state.primary_button is not None
+        state.primary_button.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path("docs/local-pack-roadmap.md").resolve())))
         )
-        body.setMaximumHeight(220)
-        sv.addWidget(body)
-        l.addWidget(scope)
+        l.addWidget(state)
         l.addStretch()
         return w
 
@@ -2335,10 +2454,23 @@ class MainWindow(QMainWindow):
         l = QVBoxLayout(w)
         l.setSpacing(10)
         l.addWidget(self._page_header(self.tr("Integrations")))
-        box = QGroupBox(self.tr("Providers"))
-        iv = QVBoxLayout(box)
+        box = SectionCard(self.tr("Provider connection center"))
+        iv = box.body_layout
+        iv.addWidget(
+            QLabel(
+                self.tr(
+                    "Integration status is shown provider-by-provider. Live OAuth/data sync surfaces "
+                    "are planned in a later milestone."
+                )
+            )
+        )
         for st in list_integration_placeholders():
-            iv.addWidget(QLabel(f"{st.provider.upper()} — {self.tr('Not connected')}"))
+            card = SectionCard(st.provider.upper())
+            status = QLabel(f"{self.tr('Status')}: {self.tr('Not connected')}")
+            status.setProperty("role", "metadata")
+            card.body_layout.addWidget(status)
+            card.body_layout.addWidget(QLabel(self.tr("Data sync and permissions UI: planned")))
+            iv.addWidget(card)
         iv.addStretch()
         l.addWidget(box)
         l.addStretch()
@@ -2349,8 +2481,16 @@ class MainWindow(QMainWindow):
         l = QVBoxLayout(w)
         l.setSpacing(10)
         l.addWidget(self._page_header(self.tr("Reports")))
-        ex = QGroupBox(self.tr("Export"))
-        ev = QVBoxLayout(ex)
+        state = EmptyState(
+            self.tr("Report builder preview"),
+            self.tr(
+                "Use this module to assemble technical audit, crawl, citations, and keyword summaries. "
+                "Structured templates and multi-format bundles are planned."
+            ),
+        )
+        l.addWidget(state)
+        ex = SectionCard(self.tr("Export"))
+        ev = ex.body_layout
         self._export_btn = QPushButton(self.tr("Export sample Markdown"))
         self._export_btn.clicked.connect(self._export_md)
         ev.addWidget(self._export_btn)
@@ -2390,8 +2530,8 @@ class MainWindow(QMainWindow):
         l = QVBoxLayout(w)
         l.setSpacing(10)
         l.addWidget(self._page_header(self.tr("Settings")))
-        app_box = QGroupBox(self.tr("Appearance"))
-        av = QVBoxLayout(app_box)
+        app_box = SectionCard(self.tr("Appearance"))
+        av = app_box.body_layout
         self._theme_combo = QComboBox()
         self._theme_combo.addItems([self.tr("Dark"), self.tr("Light")])
         s = self._session()
@@ -2408,8 +2548,8 @@ class MainWindow(QMainWindow):
         av.addLayout(lf)
         l.addWidget(app_box)
 
-        ol_box = QGroupBox(self.tr("Ollama"))
-        olv = QVBoxLayout(ol_box)
+        ol_box = SectionCard(self.tr("Ollama"))
+        olv = ol_box.body_layout
         self._ollama_url = QLineEdit()
         self._ollama_en = QCheckBox(self.tr("Enable Ollama for AI features"))
         s_ol = self._session()
@@ -2429,12 +2569,14 @@ class MainWindow(QMainWindow):
         olv.addWidget(ob)
         l.addWidget(ol_box)
 
-        crawl_note = QLabel(
-            self.tr(
-                "Crawler politeness: same-host ~3–5s jitter, 1 conn/host, 4 concurrent hosts — see README."
-            )
+        crawl_note = MethodologyPanel(
+            self.tr("Crawler politeness"),
+            self.tr("Default crawl behavior prioritizes safe pacing and predictable load."),
+            points=[
+                self.tr("Same-host delay uses ~3–5s jitter, with 1 connection per host."),
+                self.tr("Default concurrency is 4 hosts in parallel; see README for current limits."),
+            ],
         )
-        crawl_note.setWordWrap(True)
         l.addWidget(crawl_note)
         l.addStretch()
         return w
@@ -2574,6 +2716,8 @@ class MainWindow(QMainWindow):
         self._crawl_display_page_ids = []
         if not self._current_project_id:
             self._crawl_pages_table.setRowCount(0)
+            if getattr(self, "_crawl_filter_bar", None):
+                self._crawl_filter_bar.set_summary(self.tr("Active filters: none"))
             for v in getattr(self, "_crawl_stat_values", {}).values():
                 v.setText("—")
             if getattr(self, "_crawl_link_insights", None):
@@ -2688,6 +2832,24 @@ class MainWindow(QMainWindow):
             max_in = self._crawl_max_inbound.value()
             min_out = self._crawl_min_outbound.value()
             dup_only = self._crawl_dup_only.isChecked()
+            active_filters: list[str] = []
+            if q:
+                active_filters.append(self.tr("Search"))
+            if hf:
+                active_filters.append(self.tr("HTTP"))
+            if isinstance(dd, int):
+                active_filters.append(self.tr("Depth"))
+            if dup_only:
+                active_filters.append(self.tr("Duplicate finals"))
+            if max_in >= 0:
+                active_filters.append(self.tr("Max inbound"))
+            if min_out >= 0:
+                active_filters.append(self.tr("Min outbound"))
+            self._crawl_filter_bar.set_summary(
+                self.tr("Active filters: none")
+                if not active_filters
+                else self.tr("Active filters: %1").replace("%1", ", ".join(active_filters))
+            )
             rows_data: list[tuple[Page, int, int, int]] = []
             for p in candidates:
                 eff = effective_final_url(p)
@@ -2830,6 +2992,8 @@ class MainWindow(QMainWindow):
             return
         if not self._current_project_id:
             self._audit_results_table.setRowCount(0)
+            if getattr(self, "_audit_filter_bar", None):
+                self._audit_filter_bar.set_summary(self.tr("Active filters: none"))
             if getattr(self, "_audit_inspector", None):
                 self._audit_inspector.clear()
             return
@@ -2841,13 +3005,38 @@ class MainWindow(QMainWindow):
                 limit=200,
                 prioritize_page_id=prioritize_page_id,
             )
-            self._audit_results_table.setRowCount(len(rows))
+            search = self._audit_search.text().strip().lower() if getattr(self, "_audit_search", None) else ""
+            max_score = float(self._audit_max_score.value()) if getattr(self, "_audit_max_score", None) else -1.0
+            min_issues = int(self._audit_min_issues.value()) if getattr(self, "_audit_min_issues", None) else 0
+            filtered_rows: list[tuple[object, object]] = []
+            for audit, page in rows:
+                if search and search not in page.url_norm.lower():
+                    continue
+                n_issues = issue_count(audit.issues_json or [])
+                if min_issues > 0 and n_issues < min_issues:
+                    continue
+                if max_score >= 0 and audit.overall_score is not None and float(audit.overall_score) > max_score:
+                    continue
+                filtered_rows.append((audit, page))
+            active_filters: list[str] = []
+            if search:
+                active_filters.append(self.tr("Search"))
+            if max_score >= 0:
+                active_filters.append(self.tr("Max score"))
+            if min_issues > 0:
+                active_filters.append(self.tr("Min issues"))
+            self._audit_filter_bar.set_summary(
+                self.tr("Active filters: none")
+                if not active_filters
+                else self.tr("Active filters: %1").replace("%1", ", ".join(active_filters))
+            )
+            self._audit_results_table.setRowCount(len(filtered_rows))
             self._audit_row_meta = []
-            url_norms_a = [page.url_norm for _audit, page in rows]
-            pages_by_id_a = {page.id: page.url_norm for _audit, page in rows}
+            url_norms_a = [page.url_norm for _audit, page in filtered_rows]
+            pages_by_id_a = {page.id: page.url_norm for _audit, page in filtered_rows}
             in_map_a = inbound_internal_counts(s, self._current_project_id, url_norms_a)
             out_map_a = outbound_internal_counts(s, self._current_project_id, pages_by_id_a)
-            for r, (audit, page) in enumerate(rows):
+            for r, (audit, page) in enumerate(filtered_rows):
                 issues = audit.issues_json or []
                 n_issues = issue_count(issues)
                 self._audit_results_table.setItem(r, 0, QTableWidgetItem(str(audit.id)))
@@ -3160,5 +3349,21 @@ class MainWindow(QMainWindow):
                 self._jobs_table.setItem(r, 2, QTableWidgetItem(f"{j.progress_pct:.0f}"))
                 self._jobs_table.setItem(r, 3, QTableWidgetItem(j.status))
                 self._jobs_table.setItem(r, 4, QTableWidgetItem(str(j.project_id)))
+            running = sum(1 for j in jobs if j.status in {"queued", "running"})
+            failed = sum(1 for j in jobs if j.status == "failed")
+            if running == 0 and failed == 0:
+                self._top_jobs_badge.set_status(self.tr("Jobs: idle"), status="neutral")
+            elif failed:
+                self._top_jobs_badge.set_status(
+                    self.tr("Jobs: %1 running, %2 failed")
+                    .replace("%1", str(running))
+                    .replace("%2", str(failed)),
+                    status="danger",
+                )
+            else:
+                self._top_jobs_badge.set_status(
+                    self.tr("Jobs: %1 running").replace("%1", str(running)),
+                    status="warning",
+                )
         finally:
             s.close()

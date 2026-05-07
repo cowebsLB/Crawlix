@@ -25,6 +25,7 @@ _RADIUS_PX: Final[dict[str, int]] = {
     "sm": 4,
     "md": 6,
     "lg": 10,
+    "pill": 999,
 }
 
 
@@ -33,7 +34,7 @@ def spacing_px(scale: Literal["2", "4", "8", "12", "16", "24", "32"]) -> int:
     return _SPACING_PX[scale]
 
 
-def radius_px(kind: Literal["sm", "md", "lg"]) -> int:
+def radius_px(kind: Literal["sm", "md", "lg", "pill"]) -> int:
     """Corner radius in pixels for programmatic styling."""
     return _RADIUS_PX[kind]
 

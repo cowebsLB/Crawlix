@@ -99,8 +99,9 @@ python -m crawlix
 
 | Document                                               | Purpose                                              |
 |--------------------------------------------------------|------------------------------------------------------|
-| [docs/WorkLog-4-5-2026.md](docs/WorkLog-4-5-2026.md)   | Daily worklog — **4 May 2026** (current day file)    |
-| [docs/WorkLog-3-5-2026.md](docs/WorkLog-3-5-2026.md)   | Daily worklog — 3 May 2026 (prior; linked from 4 May file)|
+| [docs/WorkLog-7-5-2026.md](docs/WorkLog-7-5-2026.md)   | Daily worklog — **7 May 2026** (current day file)    |
+| [docs/WorkLog-4-5-2026.md](docs/WorkLog-4-5-2026.md)   | Daily worklog — 4 May 2026 (prior; linked from 7 May file)|
+| [docs/WorkLog-3-5-2026.md](docs/WorkLog-3-5-2026.md)   | Daily worklog — 3 May 2026 (earlier history)|
 
 ### Planning (Reference)
 
